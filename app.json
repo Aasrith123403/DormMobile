@@ -1,25 +1,57 @@
 {
   "expo": {
-    "name": "DormMobile",
-    "slug": "DormMobile",
+    "name": "RoomLedger",
+    "slug": "roomledger",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
+    "scheme": "roomledger",
     "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F172A"
+    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.roomledger.app",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": ["venmo"],
+        "NSCameraUsageDescription": "RoomLedger uses the camera to scan receipts so expense amounts fill in automatically.",
+        "NSPhotoLibraryUsageDescription": "RoomLedger lets you attach a receipt photo from your library to a shared expense."
+      }
     },
     "android": {
+      "package": "com.roomledger.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "intentFilters": [],
+      "queries": [
+        {
+          "scheme": "venmo"
+        }
+      ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
-    }
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "RoomLedger lets you attach a receipt photo from your library to a shared expense.",
+          "cameraPermission": "RoomLedger uses the camera to scan receipts so expense amounts fill in automatically."
+        }
+      ]
+    ]
   }
 }
