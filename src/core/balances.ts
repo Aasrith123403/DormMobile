@@ -15,9 +15,24 @@
  */
 
 export interface ExpenseWithSplits {
+  /** The single/primary payer. Ignored when `payers` is present. */
   paidBy: string;
   amountCents: number;
   splits: { userId: string; shareCents: number }[];
+  /**
+   * Set when several people chipped in. Their amounts must sum to
+   * `amountCents`; when absent, `paidBy` covered the whole thing.
+   */
+  payers?: { userId: string; paidCents: number }[];
+}
+
+/**
+ * Who actually put money in, normalised. Multi-payer expenses record one row
+ * per contributor; everything else is a single payer covering the total.
+ */
+export function payersOf(expense: ExpenseWithSplits): { userId: string; paidCents: number }[] {
+  if (expense.payers && expense.payers.length > 0) return expense.payers;
+  return [{ userId: expense.paidBy, paidCents: expense.amountCents }];
 }
 
 export interface SettlementRecord {
@@ -60,7 +75,9 @@ export function computeBalances(input: BalanceInput): MemberBalance[] {
   };
 
   for (const expense of input.expenses) {
-    bump(paid, expense.paidBy, expense.amountCents);
+    for (const payer of payersOf(expense)) {
+      bump(paid, payer.userId, payer.paidCents);
+    }
     for (const split of expense.splits) {
       bump(owed, split.userId, split.shareCents);
     }

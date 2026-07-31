@@ -34,7 +34,10 @@ export default function AppLayout() {
         options={{ presentation: 'modal', title: 'New subscription' }}
       />
       <Stack.Screen name="settle" options={{ presentation: 'modal', title: 'Settle up' }} />
-      <Stack.Screen name="group-info" options={{ presentation: 'modal', title: 'Group' }} />
+      <Stack.Screen
+        name="group-info"
+        options={{ presentation: 'modal', title: 'Invite & members' }}
+      />
       <Stack.Screen name="profile" options={{ presentation: 'modal', title: 'Your profile' }} />
     </Stack>
   );

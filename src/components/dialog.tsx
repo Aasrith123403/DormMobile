@@ -1,6 +1,7 @@
 import React, { useCallback, useSyncExternalStore } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { PopIn } from './motion';
 import { colors, radius, shadow, spacing, typography } from '../theme';
 
 /**
@@ -140,7 +141,8 @@ export function DialogHost() {
     >
       <Pressable style={styles.backdrop} onPress={dismiss}>
         {/* Swallow taps inside the card so it does not dismiss itself. */}
-        <Pressable style={[styles.card, shadow]} onPress={() => {}}>
+        <PopIn style={styles.cardWrap}>
+          <Pressable style={[styles.card, shadow]} onPress={() => {}}>
           <Text style={styles.title}>{request.title}</Text>
           {request.message ? <Text style={styles.message}>{request.message}</Text> : null}
 
@@ -169,8 +171,9 @@ export function DialogHost() {
                 </Text>
               </Pressable>
             ))}
-          </View>
-        </Pressable>
+            </View>
+          </Pressable>
+        </PopIn>
       </Pressable>
     </Modal>
   );
@@ -184,9 +187,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.xl,
   },
+  cardWrap: { width: '100%', maxWidth: 400 },
   card: {
     width: '100%',
-    maxWidth: 400,
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     padding: spacing.xl,

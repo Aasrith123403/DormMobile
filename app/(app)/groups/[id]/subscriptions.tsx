@@ -70,7 +70,7 @@ export default function SubscriptionsScreen() {
 
         {subscriptions.length === 0 ? (
           <EmptyState
-            icon="🔁"
+            icon="repeat-outline"
             title="No shared plans"
             message="Add Netflix, Spotify or the internet bill once — RoomLedger logs the expense every month on its own."
           />

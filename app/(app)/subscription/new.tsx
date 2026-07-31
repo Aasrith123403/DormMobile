@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -20,6 +20,8 @@ import {
   Loading,
   SectionHeader,
 } from '../../../src/components/ui';
+import { CategoryPicker } from '../../../src/components/CategoryPicker';
+import { CategoryId, detectCategory } from '../../../src/core/categories';
 import { formatMoney, parseAmountInput } from '../../../src/core/money';
 import { evenSplit } from '../../../src/core/splits';
 import { addMonths, describeNextCharge, todayIso } from '../../../src/core/subscriptions';
@@ -59,6 +61,8 @@ function NewSubscriptionScreen() {
   const [paidBy, setPaidBy] = useState<string | null>(userId);
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [nextChargeDate, setNextChargeDate] = useState<string>(addMonths(today, 1));
+  const [category, setCategory] = useState<CategoryId | null>(null);
+  const [categoryTouched, setCategoryTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -66,6 +70,12 @@ function NewSubscriptionScreen() {
   const includedIds = members.map((m) => m.id).filter((id) => !excluded.has(id));
 
   const shares = useMemo(() => evenSplit(costCents, includedIds), [costCents, includedIds.join(',')]);
+
+  // Guess a category from the plan name until the user picks one.
+  useEffect(() => {
+    if (categoryTouched) return;
+    setCategory(detectCategory(name));
+  }, [name, categoryTouched]);
 
   const dateOptions = useMemo(
     () => [
@@ -92,6 +102,7 @@ function NewSubscriptionScreen() {
         paidBy,
         nextChargeDate,
         memberIds: includedIds,
+        category,
       });
       router.back();
     } catch (caught) {
@@ -134,6 +145,15 @@ function NewSubscriptionScreen() {
             </Pressable>
           ))}
         </View>
+
+        <SectionHeader title="Category" />
+        <CategoryPicker
+          value={category}
+          onChange={(next) => {
+            setCategoryTouched(true);
+            setCategory(next);
+          }}
+        />
 
         <Field
           label="Monthly cost"

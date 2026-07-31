@@ -143,6 +143,35 @@ export function seedCustomShares(
   }));
 }
 
+/**
+ * What is still unassigned in a custom split: positive means shares fall
+ * short of the total, negative means they overshoot.
+ */
+export function remainderCents(totalCents: number, participants: SplitParticipant[]): number {
+  const assigned = participants
+    .filter((p) => p.included)
+    .reduce((sum, p) => sum + Math.round(p.customCents ?? 0), 0);
+  return totalCents - assigned;
+}
+
+/**
+ * Hands the entire unassigned remainder to one member, so the shares sum to
+ * the total exactly. Used by the "give the rest to…" shortcut, which is how
+ * most uneven splits actually get finished.
+ */
+export function assignRemainderTo(
+  totalCents: number,
+  participants: SplitParticipant[],
+  userId: string
+): SplitParticipant[] {
+  const remainder = remainderCents(totalCents, participants);
+
+  return participants.map((p) => {
+    if (p.userId !== userId || !p.included) return p;
+    return { ...p, customCents: Math.max(0, Math.round(p.customCents ?? 0) + remainder) };
+  });
+}
+
 function formatDiff(cents: number): string {
   return `$${(Math.abs(cents) / 100).toFixed(2)}`;
 }

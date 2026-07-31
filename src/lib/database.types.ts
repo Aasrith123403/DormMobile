@@ -50,7 +50,15 @@ export type ExpenseRow = {
   created_by: Uuid | null;
   subscription_id: Uuid | null;
   charge_date: IsoDateString | null;
+  /** Added in 0002_categories.sql; null on rows logged before it. */
+  category: string | null;
   created_at: IsoTimestamp;
+}
+
+export type ExpensePayerRow = {
+  expense_id: Uuid;
+  user_id: Uuid;
+  amount: Numeric;
 }
 
 export type SplitRow = {
@@ -68,6 +76,7 @@ export type SubscriptionRow = {
   paid_by: Uuid;
   next_charge_date: IsoDateString;
   active: boolean;
+  category: string | null;
   created_at: IsoTimestamp;
 }
 
@@ -126,10 +135,21 @@ type ExpenseInsert = {
   created_by?: Uuid | null;
   subscription_id?: Uuid | null;
   charge_date?: IsoDateString | null;
+  category?: string | null;
   created_at?: IsoTimestamp;
 };
 
 type SplitInsert = { expense_id: Uuid; user_id: Uuid; share_amount: NumericIn; id?: Uuid };
+
+type ExpensePayerInsert = { expense_id: Uuid; user_id: Uuid; amount: NumericIn };
+
+type ExpensePayerToExpense = {
+  foreignKeyName: 'expense_payers_expense_id_fkey';
+  columns: ['expense_id'];
+  isOneToOne: false;
+  referencedRelation: 'expenses';
+  referencedColumns: ['id'];
+};
 
 type SubscriptionInsert = {
   group_id: Uuid;
@@ -139,6 +159,7 @@ type SubscriptionInsert = {
   next_charge_date: IsoDateString;
   id?: Uuid;
   active?: boolean;
+  category?: string | null;
 };
 
 type SettlementInsert = {
@@ -187,6 +208,12 @@ export type Database = {
       memberships: Table<MembershipRow, Pick<MembershipRow, 'group_id' | 'user_id'> & Partial<MembershipRow>>;
       expenses: Table<ExpenseRow, ExpenseInsert>;
       splits: Table<SplitRow, SplitInsert, Partial<SplitInsert>, [SplitToExpense]>;
+      expense_payers: Table<
+        ExpensePayerRow,
+        ExpensePayerInsert,
+        Partial<ExpensePayerInsert>,
+        [ExpensePayerToExpense]
+      >;
       subscriptions: Table<SubscriptionRow, SubscriptionInsert>;
       subscription_members: Table<
         SubscriptionMemberRow,
@@ -210,6 +237,21 @@ export type Database = {
       log_supply_purchase: {
         Args: { p_item_id: Uuid; p_amount: number; p_description?: string | null };
         Returns: Uuid;
+      };
+      /** Per-group balances computed in Postgres — see 0004_group_summaries.sql. */
+      get_my_group_summaries: {
+        Args: Record<string, never>;
+        Returns: {
+          group_id: Uuid;
+          name: string;
+          join_code: string;
+          created_at: IsoTimestamp;
+          role: 'owner' | 'member';
+          member_count: number;
+          expense_count: number;
+          my_net: Numeric;
+          members: { id: Uuid; name: string }[];
+        }[];
       };
     };
     Enums: {};

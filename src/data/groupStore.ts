@@ -12,7 +12,7 @@ import type {
   UserRow,
 } from '../lib/database.types';
 import { supabase } from '../lib/supabase';
-import { MemberProfile, sortMembers } from './groups';
+import { MemberProfile, sortMembers } from './members';
 
 /**
  * One cache entry per group, shared by every mounted GroupProvider.
@@ -27,6 +27,8 @@ import { MemberProfile, sortMembers } from './groups';
 export interface LedgerExpense extends ExpenseRow {
   amountCents: number;
   splits: { userId: string; shareCents: number }[];
+  /** Empty unless several people chipped in. */
+  payers: { userId: string; paidCents: number }[];
 }
 
 export interface GroupSubscription extends SubscriptionRow {
@@ -122,7 +124,7 @@ async function fetchGroup(groupId: string): Promise<void> {
         supabase.from('memberships').select('*').eq('group_id', groupId),
         supabase
           .from('expenses')
-          .select('*, splits(user_id, share_amount)')
+          .select('*, splits(user_id, share_amount), expense_payers(user_id, amount)')
           .eq('group_id', groupId)
           .order('created_at', { ascending: false }),
         supabase
@@ -180,13 +182,20 @@ async function fetchGroup(groupId: string): Promise<void> {
       ),
 
       expenses: (
-        (expenseRes.data ?? []) as (ExpenseRow & { splits: { user_id: string; share_amount: string }[] })[]
+        (expenseRes.data ?? []) as (ExpenseRow & {
+          splits: { user_id: string; share_amount: string }[];
+          expense_payers: { user_id: string; amount: string }[];
+        })[]
       ).map((row) => ({
         ...row,
         amountCents: toCents(row.amount),
         splits: (row.splits ?? []).map((split) => ({
           userId: split.user_id,
           shareCents: toCents(split.share_amount),
+        })),
+        payers: (row.expense_payers ?? []).map((payer) => ({
+          userId: payer.user_id,
+          paidCents: toCents(payer.amount),
         })),
       })),
 
@@ -289,7 +298,7 @@ function startRealtime(groupId: string): () => void {
     );
     // splits and subscription_members carry no group_id to filter on; RLS
     // still limits the stream to rows in the user's own groups.
-    open('-links', ['splits', 'subscription_members']);
+    open('-links', ['splits', 'subscription_members', 'expense_payers']);
   } catch (caught) {
     console.warn('[RoomLedger] realtime unavailable, falling back to manual refresh:', caught);
   }

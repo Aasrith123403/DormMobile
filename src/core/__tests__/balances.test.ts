@@ -2,6 +2,7 @@ import {
   BalanceInput,
   computeBalances,
   minimizeTransfers,
+  payersOf,
   settleUpPlan,
   balanceForUser,
   MemberBalance,
@@ -260,5 +261,122 @@ describe('minimizeTransfers', () => {
       for (const [, net] of applied) expect(net).toBe(0);
       expect(transfers.length).toBeLessThanOrEqual(size - 1);
     }
+  });
+});
+
+describe('expenses paid by several people', () => {
+  it('credits each payer their own contribution', () => {
+    const balances = computeBalances({
+      memberIds: ['ana', 'ben'],
+      expenses: [
+        {
+          paidBy: 'ana',
+          amountCents: 6000,
+          payers: [
+            { userId: 'ana', paidCents: 4000 },
+            { userId: 'ben', paidCents: 2000 },
+          ],
+          splits: evenSplit(6000, ['ana', 'ben']),
+        },
+      ],
+      settlements: [],
+    });
+
+    // Ana put in 4000 and consumed 3000; Ben put in 2000 and consumed 3000.
+    expect(netOf(balances, 'ana')).toBe(1000);
+    expect(netOf(balances, 'ben')).toBe(-1000);
+  });
+
+  it('ignores paid_by entirely when payers are present', () => {
+    const balances = computeBalances({
+      memberIds: ['ana', 'ben'],
+      expenses: [
+        {
+          paidBy: 'ana',
+          amountCents: 1000,
+          payers: [{ userId: 'ben', paidCents: 1000 }],
+          splits: evenSplit(1000, ['ana', 'ben']),
+        },
+      ],
+      settlements: [],
+    });
+
+    expect(netOf(balances, 'ben')).toBe(500);
+    expect(netOf(balances, 'ana')).toBe(-500);
+  });
+
+  it('falls back to the single payer when there are no payer rows', () => {
+    const withEmpty = computeBalances({
+      memberIds: ['ana', 'ben'],
+      expenses: [
+        { paidBy: 'ana', amountCents: 2000, payers: [], splits: evenSplit(2000, ['ana', 'ben']) },
+      ],
+      settlements: [],
+    });
+
+    expect(netOf(withEmpty, 'ana')).toBe(1000);
+  });
+
+  it('still sums to zero with a mix of single and multi-payer expenses', () => {
+    const balances = computeBalances({
+      memberIds: ['ana', 'ben', 'cass'],
+      expenses: [
+        expense('ana', 3000, ['ana', 'ben', 'cass']),
+        {
+          paidBy: 'ben',
+          amountCents: 4501,
+          payers: [
+            { userId: 'ben', paidCents: 2501 },
+            { userId: 'cass', paidCents: 2000 },
+          ],
+          splits: evenSplit(4501, ['ana', 'ben', 'cass']),
+        },
+      ],
+      settlements: [],
+    });
+
+    expect(balances.reduce((sum, b) => sum + b.netCents, 0)).toBe(0);
+  });
+
+  it('settles a multi-payer ledger to zero', () => {
+    const input: BalanceInput = {
+      memberIds: ['ana', 'ben', 'cass'],
+      expenses: [
+        {
+          paidBy: 'ana',
+          amountCents: 9999,
+          payers: [
+            { userId: 'ana', paidCents: 5000 },
+            { userId: 'cass', paidCents: 4999 },
+          ],
+          splits: evenSplit(9999, ['ana', 'ben', 'cass']),
+        },
+      ],
+      settlements: [],
+    };
+
+    const { balances, transfers } = settleUpPlan(input);
+    const applied = new Map(balances.map((b) => [b.userId, b.netCents]));
+    for (const t of transfers) {
+      applied.set(t.fromUser, applied.get(t.fromUser)! + t.amountCents);
+      applied.set(t.toUser, applied.get(t.toUser)! - t.amountCents);
+    }
+    for (const [, net] of applied) expect(net).toBe(0);
+  });
+});
+
+describe('payersOf', () => {
+  it('normalises a single payer to one contribution', () => {
+    expect(payersOf({ paidBy: 'ana', amountCents: 500, splits: [] })).toEqual([
+      { userId: 'ana', paidCents: 500 },
+    ]);
+  });
+
+  it('passes multi-payer contributions through', () => {
+    const payers = [
+      { userId: 'ana', paidCents: 300 },
+      { userId: 'ben', paidCents: 200 },
+    ];
+    expect(payersOf({ paidBy: 'ana', amountCents: 500, splits: [], payers })).toEqual(payers);
   });
 });

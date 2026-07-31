@@ -3,6 +3,8 @@ import React, { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Ionicons } from '@expo/vector-icons';
+
 import { Button, Card, ErrorBanner, Field, Screen } from '../../src/components/ui';
 import { useAuth } from '../../src/data/auth';
 import { friendlyError } from '../../src/lib/supabase';
@@ -71,10 +73,25 @@ export default function SignUp() {
         <Screen scroll contentStyle={styles.content}>
           <View style={styles.header}>
             <Text style={styles.wordmark}>Create account</Text>
-            <Text style={styles.tagline}>Everyone in the group needs one — it keeps the ledger shared.</Text>
+            <Text style={styles.tagline}>
+              Everyone in the group needs one — it keeps the ledger shared and live.
+            </Text>
           </View>
 
           {error ? <ErrorBanner message={error} /> : null}
+
+          <Card style={styles.pitch}>
+            {[
+              { icon: 'people-outline', text: 'Make a group for your dorm, flat or trip and share the code.' },
+              { icon: 'receipt-outline', text: 'Log what you paid. Splitting and balances are automatic.' },
+              { icon: 'card-outline', text: 'Settle up in Venmo — RoomLedger never touches your money.' },
+            ].map((row) => (
+              <View key={row.icon} style={styles.pitchRow}>
+                <Ionicons name={row.icon as never} size={17} color={colors.primary} />
+                <Text style={styles.pitchText}>{row.text}</Text>
+              </View>
+            ))}
+          </Card>
 
           <Field
             label="Name"
@@ -102,6 +119,7 @@ export default function SignUp() {
             value={password}
             onChangeText={setPassword}
             placeholder="At least 6 characters"
+            hint="Six characters minimum. You can change it later."
             secureTextEntry
             autoCapitalize="none"
             autoComplete="new-password"
@@ -138,6 +156,9 @@ const styles = StyleSheet.create({
   body: { ...typography.body, lineHeight: 22 },
   strong: { fontWeight: '700' },
   hint: { ...typography.caption, lineHeight: 18 },
+  pitch: { gap: spacing.md, marginBottom: spacing.xs },
+  pitchRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+  pitchText: { ...typography.body, flex: 1, lineHeight: 20, color: colors.textMuted },
   footer: { flexDirection: 'row', justifyContent: 'center', marginTop: spacing.md },
   footerText: { ...typography.body, color: colors.textMuted },
   link: { ...typography.body, color: colors.primary, fontWeight: '600', textAlign: 'center' },

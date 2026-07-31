@@ -10,7 +10,7 @@ import {
 import { toCents } from '../core/money';
 import type { GroupRow, GroupStatusRow, SettlementRow, SupplyItemRow } from '../lib/database.types';
 import { useAuth } from './auth';
-import { MemberProfile } from './groups';
+import { MemberProfile } from './members';
 import {
   GroupSubscription,
   LedgerExpense,
@@ -71,6 +71,7 @@ export function GroupProvider({ groupId, children }: { groupId: string; children
         paidBy: e.paid_by,
         amountCents: e.amountCents,
         splits: e.splits,
+        payers: e.payers,
       })),
       settlements: settlements.map<SettlementRecord>((s) => ({
         fromUser: s.from_user,

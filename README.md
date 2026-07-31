@@ -8,6 +8,11 @@ Not a fintech app. There is no bank linking and no in-app payment processing.
 Settling up hands off to Venmo via a deep link; RoomLedger only records that it
 happened.
 
+**What it does:** shared expense ledger with categories and receipt OCR, live
+balances netted into the fewest payments, Venmo settle-up, recurring
+subscriptions that log themselves, spending insights, a supply-buying rotation,
+and lightweight group status.
+
 **Stack:** React Native + Expo (managed), TypeScript, Expo Router, Supabase
 (Postgres, Auth, Realtime, Storage).
 
@@ -43,6 +48,15 @@ screen.
 1. Create a project at [supabase.com](https://supabase.com).
 2. Open **SQL Editor → New query**.
 3. Paste the entire contents of [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) and click **Run**.
+4. Repeat with each later migration in order:
+   [`0002_categories.sql`](supabase/migrations/0002_categories.sql),
+   [`0003_multiple_payers.sql`](supabase/migrations/0003_multiple_payers.sql),
+   [`0004_group_summaries.sql`](supabase/migrations/0004_group_summaries.sql).
+
+Each one degrades gracefully if skipped: without 0002 expenses save without a
+category, without 0003 there is no multi-payer support, and without 0004 the
+home screen falls back to netting balances on the device. The app detects each
+case and keeps working.
 
 The migration is idempotent — re-running it is safe. It creates:
 
@@ -131,6 +145,7 @@ Nothing to install and no API key: RoomLedger builds a deep link and hands off.
 | Command | What it does |
 | --- | --- |
 | `npx expo start` | Run the app |
+| `npx expo start --web` | Run in a browser |
 | `npm test` | Unit tests for the pure logic |
 | `npm run typecheck` | TypeScript across the app and the tests |
 | `npx expo export --platform ios` | Production bundle, useful as a build check |
@@ -163,10 +178,64 @@ up to the total exactly. The SQL function `insert_even_splits` uses the same
 rule, so a subscription charge generated server-side matches what the app would
 have produced.
 
+### Several people can pay for one thing
+
+`expenses.paid_by` remains the single payer for the ordinary case. When more
+than one person chips in, a row per contributor goes into `expense_payers`
+and the balance maths uses those instead (`payersOf` in
+[`src/core/balances.ts`](src/core/balances.ts)). An expense either has payer
+rows or it does not — there is no partial state — so older rows keep working
+untouched and `paid_by` still points at the largest contributor for anything
+that reads it directly.
+
+### Speed
+
+The home screen used to fetch every expense, split and settlement across all
+of the user's groups and net them on the device: six round trips and a payload
+that grew with the entire history, to render a handful of numbers. It now
+calls `get_my_group_summaries()`, which does the same arithmetic in Postgres
+and returns one row per group. The function is SECURITY INVOKER, so row-level
+security applies exactly as before.
+
+### Logging is the hot path
+
+Adding an expense is one screen with no system keyboard: a dedicated amount pad
+keeps the whole form visible, the category is guessed from what you type
+(`detectCategory`), and payer/split default to "you paid, everyone splits
+evenly" behind a collapsed summary. A typical expense is amount → category →
+Save.
+
+Anything the group logs repeatedly also shows up as a one-tap chip on the
+ledger (`suggestTemplates`), which logs it again at the last-used amount.
+
+### Motion is decoration that cannot break anything
+
+`src/components/motion.tsx` holds the whole vocabulary: content fades and
+lifts into place, money counts to its new value, proportions grow. Nothing
+loops or pulses, and everything is under ~500ms.
+
+Two rules keep it safe rather than merely pretty:
+
+- **Reduce motion is honoured.** Every animation collapses to an instant state
+  change when the OS accessibility setting is on.
+- **Frames are never assumed.** `requestAnimationFrame` does not fire in a
+  hidden browser tab or a backgrounded app, so a JS-driven animation can
+  simply never run — which for a fade-in would mean content stuck at opacity
+  0. Each animation arms a `setTimeout` (which does still fire when hidden)
+  that forces the final state. Verified with frames fully frozen.
+
+### Getting started, without nagging
+
+New accounts see a four-step checklist on the home screen. Every step is
+derived from real data (`src/core/onboarding.ts`) rather than a "seen it"
+flag, so it ticks itself off, can never claim something is undone when it is
+not, and disappears once the group is set up. It is dismissible, and there
+are no notifications anywhere in the app.
+
 ### Everything derived is pure and tested
 
 `src/core/`, `src/venmo/deepLink.ts` and `src/ocr/extract.ts` contain no I/O and
-no React. 104 unit tests cover them, including randomised ledgers checked for
+no React. 173 unit tests cover them, including randomised ledgers checked for
 exact settlement:
 
 ```bash
@@ -248,8 +317,8 @@ app/                              Expo Router routes
       index.tsx                   Ledger
       balances.tsx                Balances
       subscriptions.tsx           Subscriptions
-      supplies.tsx                Supply rotation (stretch)
-      status.tsx                  Group status (stretch)
+      insights.tsx                Spending breakdown
+      house.tsx                   Supply rotation + group status
     expense/new.tsx               Add expense (modal)
     subscription/new.tsx          Add subscription (modal)
     settle.tsx                    Settle up + Venmo (modal)
@@ -259,12 +328,16 @@ app/                              Expo Router routes
 src/
   core/                           Pure logic — unit tested, no I/O
     money.ts                      Cents conversion, parsing, formatting
+    categories.ts                 Catalogue, auto-detection, grouping
+    insights.ts                   Spending totals, templates
+    amountInput.ts                Keypad typing rules
+    onboarding.ts                 Getting-started checklist
     splits.ts                     Even and custom splits, validation
     balances.ts                   Netting and transfer minimisation
     subscriptions.ts              Month arithmetic, catch-up dates
     rotation.ts                   Supply turn order
     base64.ts                     Encoder (React Native has no btoa)
-    __tests__/                    104 tests
+    __tests__/                    173 tests
   venmo/deepLink.ts               Deep link construction (pure)
   ocr/
     parseReceipt.ts               The one swappable OCR seam
@@ -276,10 +349,16 @@ src/
     groups.ts, mutations.ts       Group list, writes
     auth.tsx, realtime.ts         Session, subscription helper
   components/                     Shared UI
+    motion.tsx                    FadeIn, AnimatedMoney, AnimatedBar, PopIn
+    GettingStarted.tsx            Onboarding checklist card
   lib/                            Client, env, database types
   screens/SetupRequired.tsx       Shown when .env is unconfigured
 
-supabase/migrations/0001_init.sql Schema, RLS, RPCs, storage, cron
+supabase/migrations/
+  0001_init.sql                   Schema, RLS, RPCs, storage, cron
+  0002_categories.sql             Expense + subscription categories
+  0003_multiple_payers.sql        expense_payers for shared payment
+  0004_group_summaries.sql        One-query home screen
 ```
 
 ---

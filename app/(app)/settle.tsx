@@ -147,7 +147,7 @@ function SettleScreen() {
 
       {transfers.length === 0 ? (
         <EmptyState
-          icon="🎉"
+          icon="sparkles-outline"
           title="Nothing to settle"
           message="Every balance in this group is already at zero."
           action={<Button title="Back to group" variant="secondary" onPress={() => router.back()} />}
@@ -181,7 +181,7 @@ function SettleScreen() {
                 <Button
                   title="Pay in Venmo"
                   variant="venmo"
-                  icon="⇢"
+                  icon="arrow-forward-circle"
                   onPress={() => void payWithVenmo(transfer)}
                   disabled={busyKey === key}
                 />

@@ -1,14 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs, useLocalSearchParams } from 'expo-router';
 import React from 'react';
+import { Platform } from 'react-native';
 
 import { GroupProvider } from '../../../../src/data/groupContext';
-import { colors, typography } from '../../../../src/theme';
+import { colors } from '../../../../src/theme';
 
 /**
  * One provider above the tabs: every tab reads the same live snapshot, so
- * adding an expense updates the ledger, the balances and the subscription
- * list in the same frame.
+ * adding an expense updates the ledger, the balances and the insights in the
+ * same frame.
  */
 export default function GroupLayout() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -23,8 +24,11 @@ export default function GroupLayout() {
           tabBarStyle: {
             backgroundColor: colors.surface,
             borderTopColor: colors.border,
+            borderTopWidth: 1,
+            height: Platform.OS === 'ios' ? 86 : 62,
+            paddingTop: 6,
           },
-          tabBarLabelStyle: { ...typography.caption, fontWeight: '600' },
+          tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
           sceneStyle: { backgroundColor: colors.background },
         }}
       >
@@ -32,35 +36,53 @@ export default function GroupLayout() {
           name="index"
           options={{
             title: 'Ledger',
-            tabBarIcon: ({ color, size }) => <Ionicons name="receipt-outline" size={size} color={color} />,
+            tabBarIcon: ({ color, size, focused }) => (
+              <Ionicons name={focused ? 'receipt' : 'receipt-outline'} size={size} color={color} />
+            ),
           }}
         />
         <Tabs.Screen
           name="balances"
           options={{
             title: 'Balances',
-            tabBarIcon: ({ color, size }) => <Ionicons name="swap-horizontal" size={size} color={color} />,
+            tabBarIcon: ({ color, size, focused }) => (
+              <Ionicons
+                name={focused ? 'swap-horizontal' : 'swap-horizontal-outline'}
+                size={size}
+                color={color}
+              />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="insights"
+          options={{
+            title: 'Insights',
+            tabBarIcon: ({ color, size, focused }) => (
+              <Ionicons
+                name={focused ? 'stats-chart' : 'stats-chart-outline'}
+                size={size}
+                color={color}
+              />
+            ),
           }}
         />
         <Tabs.Screen
           name="subscriptions"
           options={{
             title: 'Plans',
-            tabBarIcon: ({ color, size }) => <Ionicons name="repeat" size={size} color={color} />,
+            tabBarIcon: ({ color, size, focused }) => (
+              <Ionicons name={focused ? 'repeat' : 'repeat-outline'} size={size} color={color} />
+            ),
           }}
         />
         <Tabs.Screen
-          name="supplies"
+          name="house"
           options={{
-            title: 'Supplies',
-            tabBarIcon: ({ color, size }) => <Ionicons name="cart-outline" size={size} color={color} />,
-          }}
-        />
-        <Tabs.Screen
-          name="status"
-          options={{
-            title: 'Status',
-            tabBarIcon: ({ color, size }) => <Ionicons name="people-outline" size={size} color={color} />,
+            title: 'House',
+            tabBarIcon: ({ color, size, focused }) => (
+              <Ionicons name={focused ? 'home' : 'home-outline'} size={size} color={color} />
+            ),
           }}
         />
       </Tabs>

@@ -86,7 +86,11 @@ export default function BalancesScreen() {
           <Text style={styles.cardTitle}>Simplest way to settle</Text>
 
           {allSettled ? (
-            <EmptyState icon="✅" title="Everyone is square" message="No payments needed right now." />
+            <EmptyState
+              icon="checkmark-circle-outline"
+              title="Everyone is square"
+              message="No payments needed right now."
+            />
           ) : (
             <>
               {transfers.map((transfer) => (

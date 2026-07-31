@@ -2,10 +2,33 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { computeBalances, ExpenseWithSplits, SettlementRecord } from '../core/balances';
 import { toCents } from '../core/money';
-import type { GroupRow, MembershipRow, UserRow } from '../lib/database.types';
+import type { GroupRow, MembershipRow } from '../lib/database.types';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './auth';
 import { useRealtimeRefresh } from './realtime';
+
+/**
+ * Set once if the summaries RPC is absent, so the slower path is not retried
+ * on every refresh.
+ */
+let summariesRpcMissing = false;
+
+interface SummaryRow {
+  group_id: string;
+  name: string;
+  join_code: string;
+  created_at: string;
+  role: 'owner' | 'member';
+  member_count: number;
+  expense_count: number;
+  my_net: string;
+  members: { id: string; name: string }[];
+}
+
+function isMissingFunction(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === 'PGRST202' || /could not find the function/i.test(error.message ?? '');
+}
 
 export interface GroupSummary {
   group: GroupRow;
@@ -13,6 +36,8 @@ export interface GroupSummary {
   memberCount: number;
   /** The signed-in user's net position in this group, in cents. */
   netCents: number;
+  /** Enough to render an avatar stack on the card. */
+  members: { id: string; name: string }[];
 }
 
 /**
@@ -22,6 +47,8 @@ export interface GroupSummary {
 export function useGroups() {
   const { userId } = useAuth();
   const [summaries, setSummaries] = useState<GroupSummary[]>([]);
+  /** Across every group, for the getting-started checklist. */
+  const [expenseCount, setExpenseCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,15 +59,57 @@ export function useGroups() {
       return;
     }
 
+    // Fast path: one round trip, netted in Postgres. Falls through to the
+    // client-side computation below if 0004_group_summaries.sql has not been
+    // applied, so the app keeps working either way.
+    if (!summariesRpcMissing) {
+      const { data, error: rpcError } = await supabase.rpc('get_my_group_summaries');
+
+      if (!rpcError && data) {
+        setSummaries(
+          (data as SummaryRow[]).map((row) => ({
+            group: {
+              id: row.group_id,
+              name: row.name,
+              join_code: row.join_code,
+              created_at: row.created_at,
+              created_by: '',
+            },
+            role: row.role,
+            memberCount: row.member_count,
+            netCents: toCents(row.my_net),
+            members: row.members ?? [],
+          }))
+        );
+        setExpenseCount((data as SummaryRow[]).reduce((sum, row) => sum + row.expense_count, 0));
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
+      if (isMissingFunction(rpcError)) {
+        summariesRpcMissing = true;
+        console.warn(
+          '[RoomLedger] get_my_group_summaries missing — apply 0004_group_summaries.sql for a faster home screen.'
+        );
+      } else if (rpcError) {
+        setError(rpcError.message);
+        setLoading(false);
+        return;
+      }
+    }
+
     try {
       // RLS already limits every table below to the caller's groups, so these
       // unfiltered reads only ever return rows the user is entitled to.
-      const [membershipsRes, groupsRes, expensesRes, splitsRes, settlementsRes] = await Promise.all([
+      const [membershipsRes, groupsRes, expensesRes, splitsRes, settlementsRes, usersRes] =
+        await Promise.all([
         supabase.from('memberships').select('*'),
         supabase.from('groups').select('*').order('created_at', { ascending: false }),
         supabase.from('expenses').select('id, group_id, paid_by, amount'),
         supabase.from('splits').select('expense_id, user_id, share_amount'),
         supabase.from('settlements').select('group_id, from_user, to_user, amount'),
+        supabase.from('users').select('id, name'),
       ]);
 
       const firstError =
@@ -48,8 +117,11 @@ export function useGroups() {
         groupsRes.error ??
         expensesRes.error ??
         splitsRes.error ??
-        settlementsRes.error;
+        settlementsRes.error ??
+        usersRes.error;
       if (firstError) throw firstError;
+
+      const nameById = new Map((usersRes.data ?? []).map((user) => [user.id, user.name]));
 
       const memberships = (membershipsRes.data ?? []) as MembershipRow[];
       const groups = (groupsRes.data ?? []) as GroupRow[];
@@ -103,10 +175,15 @@ export function useGroups() {
           role: (groupMembers.find((m) => m.user_id === userId)?.role ?? 'member') as 'owner' | 'member',
           memberCount: groupMembers.length,
           netCents: balances.find((b) => b.userId === userId)?.netCents ?? 0,
+          members: groupMembers
+            .slice()
+            .sort((a, b) => a.created_at.localeCompare(b.created_at))
+            .map((m) => ({ id: m.user_id, name: nameById.get(m.user_id) ?? 'Roommate' })),
         };
       });
 
       setSummaries(next);
+      setExpenseCount((expensesRes.data ?? []).length);
       setError(null);
     } catch (caught) {
       setError((caught as Error).message);
@@ -122,7 +199,7 @@ export function useGroups() {
   useRealtimeRefresh({
     channel: `groups-of-${userId ?? 'anon'}`,
     enabled: Boolean(userId),
-    tables: ['memberships', 'groups', 'expenses', 'splits', 'settlements'],
+    tables: ['memberships', 'groups', 'expenses', 'splits', 'settlements', 'users'],
     onChange: load,
   });
 
@@ -132,7 +209,7 @@ export function useGroups() {
     return { owedToYouCents: owed, youOweCents: -owes };
   }, [summaries]);
 
-  return { summaries, totals, loading, error, refresh: load };
+  return { summaries, totals, expenseCount, loading, error, refresh: load };
 }
 
 export async function createGroup(name: string): Promise<GroupRow> {
@@ -156,10 +233,5 @@ export async function leaveGroup(groupId: string, userId: string): Promise<void>
   if (error) throw error;
 }
 
-export type MemberProfile = UserRow & { role: 'owner' | 'member'; joinedAt: string };
-
-export function sortMembers(members: MemberProfile[]): MemberProfile[] {
-  return [...members].sort(
-    (a, b) => a.joinedAt.localeCompare(b.joinedAt) || a.id.localeCompare(b.id)
-  );
-}
+export { sortMembers } from './members';
+export type { MemberProfile } from './members';

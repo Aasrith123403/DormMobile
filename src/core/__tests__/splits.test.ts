@@ -1,4 +1,12 @@
-import { computeSplits, evenSplit, seedCustomShares, sumShares, SplitParticipant } from '../splits';
+import {
+  assignRemainderTo,
+  computeSplits,
+  evenSplit,
+  remainderCents,
+  seedCustomShares,
+  sumShares,
+  SplitParticipant,
+} from '../splits';
 
 const participants = (ids: string[], included = true): SplitParticipant[] =>
   ids.map((userId) => ({ userId, included }));
@@ -152,5 +160,101 @@ describe('seedCustomShares', () => {
 
     expect(seeded.map((p) => p.customCents)).toEqual([500, 500, 0]);
     expect(computeSplits(1000, seeded, 'custom').valid).toBe(true);
+  });
+});
+
+describe('remainderCents', () => {
+  it('reports what is left to assign', () => {
+    expect(
+      remainderCents(1000, [
+        { userId: 'a', included: true, customCents: 400 },
+        { userId: 'b', included: true, customCents: 300 },
+      ])
+    ).toBe(300);
+  });
+
+  it('goes negative when shares overshoot', () => {
+    expect(
+      remainderCents(1000, [
+        { userId: 'a', included: true, customCents: 800 },
+        { userId: 'b', included: true, customCents: 400 },
+      ])
+    ).toBe(-200);
+  });
+
+  it('ignores excluded members', () => {
+    expect(
+      remainderCents(1000, [
+        { userId: 'a', included: true, customCents: 1000 },
+        { userId: 'b', included: false, customCents: 500 },
+      ])
+    ).toBe(0);
+  });
+
+  it('treats a missing custom amount as zero', () => {
+    expect(remainderCents(1000, [{ userId: 'a', included: true }])).toBe(1000);
+  });
+});
+
+describe('assignRemainderTo', () => {
+  it('gives the shortfall to the chosen member', () => {
+    const next = assignRemainderTo(
+      1000,
+      [
+        { userId: 'a', included: true, customCents: 400 },
+        { userId: 'b', included: true, customCents: 300 },
+      ],
+      'b'
+    );
+
+    expect(next.find((p) => p.userId === 'b')?.customCents).toBe(600);
+    expect(computeSplits(1000, next, 'custom').valid).toBe(true);
+  });
+
+  it('takes the excess back off the chosen member', () => {
+    const next = assignRemainderTo(
+      1000,
+      [
+        { userId: 'a', included: true, customCents: 800 },
+        { userId: 'b', included: true, customCents: 400 },
+      ],
+      'b'
+    );
+
+    expect(next.find((p) => p.userId === 'b')?.customCents).toBe(200);
+    expect(computeSplits(1000, next, 'custom').valid).toBe(true);
+  });
+
+  it('never drives a share negative', () => {
+    const next = assignRemainderTo(
+      1000,
+      [
+        { userId: 'a', included: true, customCents: 5000 },
+        { userId: 'b', included: true, customCents: 100 },
+      ],
+      'b'
+    );
+
+    expect(next.find((p) => p.userId === 'b')?.customCents).toBe(0);
+  });
+
+  it('leaves excluded members alone', () => {
+    const participants: SplitParticipant[] = [
+      { userId: 'a', included: true, customCents: 400 },
+      { userId: 'b', included: false, customCents: 0 },
+    ];
+    expect(assignRemainderTo(1000, participants, 'b')).toEqual(participants);
+  });
+
+  it('always produces a valid split for the chosen member', () => {
+    for (let total = 1; total <= 300; total += 7) {
+      const participants: SplitParticipant[] = [
+        { userId: 'a', included: true, customCents: Math.floor(total / 3) },
+        { userId: 'b', included: true, customCents: 0 },
+        { userId: 'c', included: true, customCents: 1 },
+      ];
+      const next = assignRemainderTo(total, participants, 'b');
+      expect(sumShares(computeSplits(total, next, 'custom').lines)).toBe(total);
+    }
   });
 });
