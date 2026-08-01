@@ -123,6 +123,46 @@ function SettleScreen() {
     }
   };
 
+  /**
+   * Move-out settle: records every outstanding transfer at once. The set is
+   * already the minimised one the Balances screen shows, so this is the same
+   * answer, applied — not a different calculation.
+   */
+  const settleEveryone = async () => {
+    const confirmed = await confirm({
+      title: 'Settle everyone up?',
+      message:
+        `This records all ${transfers.length} outstanding ` +
+        `${transfers.length === 1 ? 'payment' : 'payments'} as paid. ` +
+        'Use it when the money has actually moved — at a move-out, say.',
+      confirmLabel: 'Record all',
+    });
+
+    if (!confirmed) return;
+
+    setBusyKey('__all__');
+    setError(null);
+
+    try {
+      // Sequential, so a failure part-way leaves a consistent ledger rather
+      // than an unknown subset.
+      for (const transfer of transfers) {
+        await recordSettlement({
+          groupId,
+          fromUser: transfer.fromUser,
+          toUser: transfer.toUser,
+          amountCents: transfer.amountCents,
+          note: group?.name ? `Final settle · ${group.name}` : 'Final settle',
+        });
+      }
+      await refresh();
+    } catch (caught) {
+      setError(friendlyError(caught));
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   const confirmManual = async (transfer: Transfer, label: string) => {
     const confirmed = await confirm({
       title: label,
@@ -244,6 +284,23 @@ function SettleScreen() {
             ))}
           </Card>
         </>
+      ) : null}
+
+      {transfers.length > 1 ? (
+        <Card style={styles.card}>
+          <Text style={styles.rowTitle}>Moving out?</Text>
+          <Text style={styles.rowMeta}>
+            Records all {transfers.length} payments at once, so nobody has to work through the list.
+            Pay the amounts in Venmo first.
+          </Text>
+          <Button
+            title="Settle everyone up"
+            variant="secondary"
+            icon="checkmark-done"
+            loading={busyKey === '__all__'}
+            onPress={() => void settleEveryone()}
+          />
+        </Card>
       ) : null}
 
       {transfers.length > 0 ? (

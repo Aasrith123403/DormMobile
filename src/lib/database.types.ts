@@ -52,6 +52,13 @@ export type ExpenseRow = {
   charge_date: IsoDateString | null;
   /** Added in 0002_categories.sql; null on rows logged before it. */
   category: string | null;
+  /** Set when this expense was a supply run (0005_household.sql). */
+  supply_item_id: Uuid | null;
+  /** Non-null on a template the user marked "repeats monthly". */
+  repeat_interval: 'monthly' | null;
+  repeat_next_date: IsoDateString | null;
+  /** Set on generated copies, pointing at their template. */
+  repeat_parent_id: Uuid | null;
   created_at: IsoTimestamp;
 }
 
@@ -99,14 +106,38 @@ export type SupplyItemRow = {
   id: Uuid;
   group_id: Uuid;
   name: string;
-  current_turn_user_id: Uuid | null;
+  /** Somebody tapped "we're out". */
+  is_needed: boolean;
+  needed_at: IsoTimestamp | null;
+  needed_by: Uuid | null;
+  last_bought_by: Uuid | null;
+  last_bought_at: IsoTimestamp | null;
   created_at: IsoTimestamp;
+}
+
+export type ChoreRow = {
+  id: Uuid;
+  group_id: Uuid;
+  name: string;
+  frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly';
+  next_due: IsoDateString;
+  created_at: IsoTimestamp;
+}
+
+export type ChoreCompletionRow = {
+  id: Uuid;
+  chore_id: Uuid;
+  user_id: Uuid;
+  completed_at: IsoTimestamp;
 }
 
 export type GroupStatusRow = {
   group_id: Uuid;
   user_id: Uuid;
   status: string;
+  note: string | null;
+  /** When the status stops being shown, so nobody has to unset it. */
+  clears_at: IsoTimestamp | null;
   updated_at: IsoTimestamp;
 }
 
@@ -136,6 +167,10 @@ type ExpenseInsert = {
   subscription_id?: Uuid | null;
   charge_date?: IsoDateString | null;
   category?: string | null;
+  supply_item_id?: Uuid | null;
+  repeat_interval?: 'monthly' | null;
+  repeat_next_date?: IsoDateString | null;
+  repeat_parent_id?: Uuid | null;
   created_at?: IsoTimestamp;
 };
 
@@ -176,7 +211,17 @@ type GroupStatusInsert = {
   group_id: Uuid;
   user_id: Uuid;
   status: string;
+  note?: string | null;
+  clears_at?: IsoTimestamp | null;
   updated_at?: IsoTimestamp;
+};
+
+type ChoreCompletionToChore = {
+  foreignKeyName: 'chore_completions_chore_id_fkey';
+  columns: ['chore_id'];
+  isOneToOne: false;
+  referencedRelation: 'chores';
+  referencedColumns: ['id'];
 };
 
 /**
@@ -223,6 +268,13 @@ export type Database = {
       >;
       settlements: Table<SettlementRow, SettlementInsert>;
       supply_items: Table<SupplyItemRow, Pick<SupplyItemRow, 'group_id' | 'name'> & Partial<SupplyItemRow>>;
+      chores: Table<ChoreRow, Pick<ChoreRow, 'group_id' | 'name'> & Partial<ChoreRow>>;
+      chore_completions: Table<
+        ChoreCompletionRow,
+        Pick<ChoreCompletionRow, 'chore_id' | 'user_id'> & Partial<ChoreCompletionRow>,
+        Partial<ChoreCompletionRow>,
+        [ChoreCompletionToChore]
+      >;
       group_status: Table<GroupStatusRow, GroupStatusInsert>;
     };
     // Empty object literals (not Record<string, never>) so these still
@@ -234,10 +286,13 @@ export type Database = {
       // Group id is required: the all-groups variant is scheduler-only and is
       // deliberately not executable by client roles.
       generate_due_subscription_charges: { Args: { p_group_id: Uuid }; Returns: number };
-      log_supply_purchase: {
+      mark_supply_needed: { Args: { p_item_id: Uuid; p_needed?: boolean }; Returns: undefined };
+      buy_supply_item: {
         Args: { p_item_id: Uuid; p_amount: number; p_description?: string | null };
         Returns: Uuid;
       };
+      complete_chore: { Args: { p_chore_id: Uuid }; Returns: undefined };
+      generate_due_repeating_expenses: { Args: { p_group_id: Uuid }; Returns: number };
       /** Per-group balances computed in Postgres — see 0004_group_summaries.sql. */
       get_my_group_summaries: {
         Args: Record<string, never>;

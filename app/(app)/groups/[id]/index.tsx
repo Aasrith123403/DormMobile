@@ -1,43 +1,64 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { GroupHeader } from '../../../../src/components/GroupHeader';
-import { confirm, notify } from '../../../../src/components/dialog';
-import { FadeIn } from '../../../../src/components/motion';
+import { notify } from '../../../../src/components/dialog';
 import { successFeedback } from '../../../../src/components/haptics';
+import { FadeIn } from '../../../../src/components/motion';
+import { SettlePromptCard } from '../../../../src/components/SettlePromptCard';
 import {
   Avatar,
-  AvatarStack,
-  Badge,
+  Button,
+  Card,
   EmptyState,
   ErrorBanner,
-  Field,
   IconChip,
   Loading,
   Tappable,
 } from '../../../../src/components/ui';
-import { getCategory } from '../../../../src/core/categories';
-import { suggestTemplates } from '../../../../src/core/insights';
+import { FeedEntry, buildFeed, feedTimeAgo } from '../../../../src/core/feed';
 import { formatMoney } from '../../../../src/core/money';
-import { evenSplit } from '../../../../src/core/splits';
+import { currentMonthKey, previousMonthKey, summarizeMonth } from '../../../../src/core/spendSummary';
+import { todayIso } from '../../../../src/core/subscriptions';
 import { useAuth } from '../../../../src/data/auth';
-import { LedgerExpense, useGroup } from '../../../../src/data/groupContext';
-import { addExpense, deleteExpense } from '../../../../src/data/mutations';
+import { useGroup } from '../../../../src/data/groupContext';
+import { completeChore, markSupplyNeeded } from '../../../../src/data/mutations';
 import { friendlyError } from '../../../../src/lib/supabase';
 import { colors, radius, shadowLifted, spacing, typography } from '../../../../src/theme';
 
-export default function LedgerScreen() {
+/**
+ * The house feed — the group's landing screen.
+ *
+ * Nobody posts here. Every row is a byproduct of something that already
+ * happened, or a date the app already holds. The screen's only job is to make
+ * opening the app worth it without anyone having to maintain anything.
+ */
+export default function HouseFeedScreen() {
   const router = useRouter();
   const { userId } = useAuth();
-  const { groupId, expenses, members, loading, error, refresh, displayName, memberById } = useGroup();
+  const {
+    groupId,
+    expenses,
+    supplyItems,
+    chores,
+    statuses,
+    settlements,
+    subscriptions,
+    supplyTurns,
+    choreTurns,
+    members,
+    memberById,
+    displayName,
+    loading,
+    error,
+    refresh,
+  } = useGroup();
 
   const [refreshing, setRefreshing] = useState(false);
-  const [query, setQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [quickBusy, setQuickBusy] = useState<string | null>(null);
+  const today = todayIso();
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -45,427 +66,304 @@ export default function LedgerScreen() {
     setRefreshing(false);
   };
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return expenses;
-
-    return expenses.filter((expense) => {
-      const payer = memberById.get(expense.paid_by)?.name ?? '';
-      const category = getCategory(expense.category).label;
-      return (
-        expense.description.toLowerCase().includes(needle) ||
-        payer.toLowerCase().includes(needle) ||
-        category.toLowerCase().includes(needle)
-      );
-    });
-  }, [expenses, query, memberById]);
-
-  const sections = useMemo(() => groupByDay(filtered), [filtered]);
-
-  /** Things this group logs often, offered as one-tap repeats. */
-  const templates = useMemo(
+  const thisMonth = useMemo(
     () =>
-      suggestTemplates(
-        expenses.map((expense) => ({
-          description: expense.description,
-          amountCents: expense.amountCents,
-          category: expense.category,
-          createdAt: expense.created_at,
+      summarizeMonth(
+        expenses.map((e) => ({
+          amountCents: e.amountCents,
+          paidBy: e.paid_by,
+          category: e.category,
+          createdAt: e.created_at,
+          splits: e.splits,
+          payers: e.payers,
         })),
-        4
+        currentMonthKey(),
+        members.map((m) => m.id)
       ),
-    [expenses]
+    [expenses, members]
   );
 
-  /**
-   * One tap: you paid, split evenly across everyone, same amount as last
-   * time. Anything unusual goes through the full form instead.
-   */
-  const quickAdd = async (template: (typeof templates)[number]) => {
-    if (!userId || quickBusy) return;
+  const lastMonth = useMemo(() => {
+    const summary = summarizeMonth(
+      expenses.map((e) => ({
+        amountCents: e.amountCents,
+        paidBy: e.paid_by,
+        category: e.category,
+        createdAt: e.created_at,
+        splits: e.splits,
+        payers: e.payers,
+      })),
+      previousMonthKey(currentMonthKey()),
+      members.map((m) => m.id)
+    );
+    return summary.isEmpty ? null : summary;
+  }, [expenses, members]);
 
-    setQuickBusy(template.description);
-    try {
-      await addExpense({
-        groupId,
-        paidBy: userId,
-        createdBy: userId,
-        description: template.description,
-        amountCents: template.amountCents,
-        category: template.category,
-        splits: evenSplit(
-          template.amountCents,
-          members.map((m) => m.id)
-        ),
-      });
-      successFeedback();
-      await refresh();
-    } catch (caught) {
-      await notify({ title: 'Could not add', message: friendlyError(caught) });
-    } finally {
-      setQuickBusy(null);
-    }
-  };
-
-  const confirmDelete = async (expense: LedgerExpense) => {
-    const confirmed = await confirm({
-      title: 'Delete expense?',
-      message: `“${expense.description}” will be removed for everyone.`,
-      confirmLabel: 'Delete',
-      destructive: true,
-    });
-
-    if (!confirmed) return;
-
-    try {
-      await deleteExpense(expense.id);
-      await refresh();
-    } catch (caught) {
-      await notify({ title: 'Could not delete', message: friendlyError(caught) });
-    }
-  };
-
-  const monthTotal = useMemo(() => {
-    const now = new Date();
-    return expenses
-      .filter((expense) => {
-        const date = new Date(expense.created_at);
-        return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
-      })
-      .reduce((sum, expense) => sum + expense.amountCents, 0);
-  }, [expenses]);
+  const feed = useMemo(
+    () =>
+      buildFeed({
+        viewerId: userId,
+        nameOf: displayName,
+        expenses: expenses.map((e) => ({
+          id: e.id,
+          description: e.description,
+          amountCents: e.amountCents,
+          paidBy: e.paid_by,
+          createdAt: e.created_at,
+          supplyItemId: e.supply_item_id,
+          repeatParentId: e.repeat_parent_id,
+        })),
+        supplyItems: supplyItems.map((item) => ({
+          id: item.id,
+          name: item.name,
+          isNeeded: item.is_needed,
+          neededAt: item.needed_at,
+          neededBy: item.needed_by,
+          turnUserId: supplyTurns.get(item.id) ?? null,
+        })),
+        chores: chores.map((chore) => ({
+          id: chore.id,
+          name: chore.name,
+          nextDue: chore.next_due,
+          turnUserId: choreTurns.get(chore.id) ?? null,
+          completions: chore.completions.map((c) => ({
+            id: c.id,
+            userId: c.user_id,
+            completedAt: c.completed_at,
+          })),
+        })),
+        statuses: statuses.map((s) => ({
+          userId: s.user_id,
+          status: s.status,
+          updatedAt: s.updated_at,
+        })),
+        settlements: settlements.map((s) => ({
+          id: s.id,
+          fromUser: s.from_user,
+          toUser: s.to_user,
+          amountCents: Math.round(Number(s.amount) * 100),
+          settledAt: s.settled_at,
+        })),
+        // Recurring money that has not posted yet: subscriptions plus any
+        // expense the user marked "repeats monthly".
+        upcoming: [
+          ...subscriptions
+            .filter((s) => s.active)
+            .map((s) => ({
+              id: `sub-${s.id}`,
+              name: s.name,
+              amountCents: s.monthlyCostCents,
+              dueDate: s.next_charge_date,
+            })),
+          ...expenses
+            .filter((e) => e.repeat_interval && e.repeat_next_date)
+            .map((e) => ({
+              id: `rep-${e.id}`,
+              name: e.description,
+              amountCents: e.amountCents,
+              dueDate: e.repeat_next_date!,
+            })),
+        ],
+        lastMonth: lastMonth
+          ? {
+              month: lastMonth.month,
+              label: lastMonth.label,
+              totalCents: lastMonth.totalCents,
+              byCategory: lastMonth.byCategory,
+            }
+          : null,
+        today,
+      }),
+    [
+      userId,
+      displayName,
+      expenses,
+      supplyItems,
+      chores,
+      statuses,
+      settlements,
+      subscriptions,
+      supplyTurns,
+      choreTurns,
+      lastMonth,
+      today,
+    ]
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-      <GroupHeader
-        action={
-          <Pressable
-            onPress={() => {
-              setSearchOpen((open) => !open);
-              if (searchOpen) setQuery('');
-            }}
-            hitSlop={8}
-            accessibilityLabel="Search expenses"
-          >
-            <Ionicons
-              name={searchOpen ? 'close' : 'search'}
-              size={21}
-              color={searchOpen ? colors.text : colors.textMuted}
-            />
-          </Pressable>
-        }
-      />
-
-      {searchOpen ? (
-        <View style={styles.searchWrap}>
-          <Field
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search by name, person or category"
-            icon="search"
-            autoFocus
-            autoCorrect={false}
-          />
-        </View>
-      ) : null}
+      <GroupHeader subtitle={thisMonth.isEmpty ? undefined : `${formatMoney(thisMonth.totalCents)} this month`} />
 
       {error ? <ErrorBanner message={error} onRetry={refresh} /> : null}
 
-      {loading && expenses.length === 0 ? (
-        <Loading label="Loading the ledger" />
+      {loading && feed.length === 0 ? (
+        <Loading label="Catching up" />
       ) : (
         <FlatList
-          data={sections}
-          keyExtractor={(item) => item.key}
+          data={feed}
+          keyExtractor={(entry) => entry.id}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
-            <>
-              {members.length === 1 && !query ? (
-                <FadeIn>
-                  <Tappable
-                    onPress={() => router.push({ pathname: '/(app)/group-info', params: { groupId } })}
-                    style={styles.nudge}
-                  >
-                    <Ionicons name="person-add" size={18} color={colors.primary} />
-                    <View style={styles.nudgeBody}>
-                      <Text style={styles.nudgeTitle}>You are the only one here</Text>
-                      <Text style={styles.nudgeText}>
-                        Share the join code so roommates see this ledger too.
-                      </Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={16} color={colors.primary} />
-                  </Tappable>
-                </FadeIn>
-              ) : null}
+            <View style={styles.header}>
+              <SettlePromptCard />
 
-              {monthTotal > 0 && !query ? (
-                <View style={styles.monthRow}>
-                  <Text style={styles.monthLabel}>This month</Text>
-                  <Text style={styles.monthTotal}>{formatMoney(monthTotal)}</Text>
-                </View>
+              {!thisMonth.isEmpty ? (
+                <Tappable
+                  onPress={() => router.push(`/(app)/groups/${groupId}/insights`)}
+                  style={styles.glance}
+                >
+                  <IconChip icon="stats-chart" color={colors.primary} background={colors.primarySoft} size={34} />
+                  <View style={styles.glanceBody}>
+                    <Text style={styles.glanceTitle}>
+                      {formatMoney(thisMonth.totalCents)} this month
+                    </Text>
+                    <Text style={styles.glanceMeta}>
+                      {thisMonth.expenseCount}{' '}
+                      {thisMonth.expenseCount === 1 ? 'expense' : 'expenses'}
+                      {thisMonth.byCategory[0]
+                        ? ` · mostly ${thisMonth.byCategory[0].category.label.toLowerCase()}`
+                        : ''}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={17} color={colors.textFaint} />
+                </Tappable>
               ) : null}
-
-              {templates.length > 0 && !query ? (
-                <View style={styles.quickBlock}>
-                  <Text style={styles.quickLabel}>Log again</Text>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.quickRow}
-                  >
-                    {templates.map((template) => {
-                      const category = getCategory(template.category);
-                      const busy = quickBusy === template.description;
-
-                      return (
-                        <Tappable
-                          key={template.description}
-                          onPress={() => void quickAdd(template)}
-                          disabled={Boolean(quickBusy)}
-                          style={[styles.quickChip, busy && styles.quickChipBusy]}
-                        >
-                          <Ionicons name={category.icon as never} size={15} color={category.color} />
-                          <View>
-                            <Text style={styles.quickChipTitle} numberOfLines={1}>
-                              {template.description}
-                            </Text>
-                            <Text style={styles.quickChipAmount}>
-                              {formatMoney(template.amountCents)}
-                            </Text>
-                          </View>
-                        </Tappable>
-                      );
-                    })}
-                  </ScrollView>
-                </View>
-              ) : null}
-            </>
+            </View>
           }
-          renderItem={({ item, index }) =>
-            item.type === 'header' ? (
-              <View style={styles.dayHeaderRow}>
-                <Text style={styles.dayHeader}>{item.label}</Text>
-                <Text style={styles.dayTotal}>{formatMoney(item.totalCents)}</Text>
-              </View>
-            ) : (
-              <FadeIn index={index} distance={8}>
-                <ExpenseRow
-                  expense={item.expense}
-                mine={item.expense.paid_by === userId}
-                payerName={displayName(item.expense.paid_by)}
-                payerAvatarName={memberById.get(item.expense.paid_by)?.name ?? 'Former member'}
-                participants={item.expense.splits
-                  .map((split) => memberById.get(split.userId))
-                  .filter(Boolean)
-                  .map((member) => ({ id: member!.id, name: member!.name }))}
-                yourShareCents={
-                  item.expense.splits.find((split) => split.userId === userId)?.shareCents ?? null
-                }
-                  onLongPress={() => void confirmDelete(item.expense)}
-                />
-              </FadeIn>
-            )
-          }
-          ListEmptyComponent={
-            query ? (
-              <EmptyState icon="search" title="No matches" message={`Nothing found for “${query}”.`} />
-            ) : (
-              <EmptyState
-                icon="receipt-outline"
-                title="Nothing logged yet"
-                message={
-                  'Tap Add expense, type the amount, pick a category — that is it. ' +
-                  'Everyone is included and the split is even unless you change it.'
-                }
+          renderItem={({ item, index }) => (
+            <FadeIn index={index} distance={6}>
+              <FeedRow
+                entry={item}
+                avatarName={item.actorId ? (memberById.get(item.actorId)?.name ?? '?') : '?'}
+                onRefresh={refresh}
               />
-            )
+            </FadeIn>
+          )}
+          ListEmptyComponent={
+            <EmptyState
+              icon="home-outline"
+              title="Nothing has happened yet"
+              message="Log an expense, add a staple or a chore — this fills itself in from what everyone does."
+              action={
+                <Button
+                  title="Add an expense"
+                  onPress={() => router.push({ pathname: '/(app)/expense/new', params: { groupId } })}
+                />
+              }
+            />
           }
         />
       )}
-
-      <Tappable
-        accessibilityLabel="Add expense"
-        onPress={() => router.push({ pathname: '/(app)/expense/new', params: { groupId } })}
-        style={[styles.fab, shadowLifted]}
-      >
-        <Ionicons name="add" size={24} color={colors.textInverse} />
-        <Text style={styles.fabLabel}>Add expense</Text>
-      </Tappable>
     </SafeAreaView>
   );
 }
 
-function ExpenseRow({
-  expense,
-  mine,
-  payerName,
-  payerAvatarName,
-  participants,
-  yourShareCents,
-  onLongPress,
+function FeedRow({
+  entry,
+  avatarName,
+  onRefresh,
 }: {
-  expense: LedgerExpense;
-  mine: boolean;
-  payerName: string;
-  payerAvatarName: string;
-  participants: { id: string; name: string }[];
-  yourShareCents: number | null;
-  onLongPress: () => void;
+  entry: FeedEntry;
+  avatarName: string;
+  onRefresh: () => Promise<void>;
 }) {
-  const category = getCategory(expense.category);
+  const { supplyItems, chores } = useGroup();
+  const [busy, setBusy] = useState(false);
+
+  /**
+   * The one-tap resolution for an actionable row, done inline so the feed is
+   * a place things get finished rather than a list of places to navigate to.
+   */
+  const act = async () => {
+    if (busy) return;
+    setBusy(true);
+
+    try {
+      if (entry.kind === 'supply-needed') {
+        const item = supplyItems.find((s) => `supply-needed-${s.id}` === entry.id);
+        if (item) {
+          // Un-flag only; buying takes an amount, which lives on the House tab.
+          await markSupplyNeeded(item.id, false);
+        }
+      } else if (entry.id.startsWith('chore-due-')) {
+        const chore = chores.find((c) => `chore-due-${c.id}` === entry.id);
+        if (chore) await completeChore(chore.id);
+      }
+
+      successFeedback();
+      await onRefresh();
+    } catch (caught) {
+      await notify({ title: 'Could not update', message: friendlyError(caught) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const isChore = entry.id.startsWith('chore-due-');
 
   return (
-    <Tappable onLongPress={onLongPress} haptic={false} scaleTo={0.99} style={styles.row}>
-      <IconChip icon={category.icon} color={category.color} background={category.softColor} />
+    <View style={[styles.row, entry.actionable && styles.rowActionable]}>
+      {entry.actorId ? (
+        <Avatar name={avatarName} id={entry.actorId} size={34} />
+      ) : (
+        <IconChip
+          icon={entry.icon}
+          color={entry.actionable ? colors.warning : colors.textMuted}
+          background={entry.actionable ? colors.warningSoft : colors.surfaceAlt}
+          size={34}
+        />
+      )}
 
       <View style={styles.rowBody}>
-        <View style={styles.rowTitleLine}>
-          <Text style={styles.rowTitle} numberOfLines={1}>
-            {expense.description}
-          </Text>
-          {expense.subscription_id ? <Badge label="Auto" tone="primary" /> : null}
-          {expense.receipt_url ? (
-            <Ionicons name="image-outline" size={13} color={colors.textFaint} />
-          ) : null}
-        </View>
+        <Text style={styles.rowTitle}>{entry.title}</Text>
+        {entry.detail ? <Text style={styles.rowDetail}>{entry.detail}</Text> : null}
 
-        <View style={styles.rowMetaLine}>
-          <Avatar name={payerAvatarName} id={expense.paid_by} size={16} />
-          <Text style={styles.rowMeta} numberOfLines={1}>
-            {mine ? 'You paid' : `${payerName} paid`}
-          </Text>
-          <AvatarStack people={participants} size={16} max={3} />
-        </View>
+        {entry.actionable ? (
+          <Button
+            title={isChore ? 'Mark done' : 'Got it'}
+            variant="subtle"
+            size="sm"
+            loading={busy}
+            onPress={act}
+            style={styles.rowAction}
+          />
+        ) : null}
       </View>
 
-      <View style={styles.rowAmounts}>
-        <Text style={styles.rowAmount}>{formatMoney(expense.amountCents)}</Text>
-        {yourShareCents !== null ? (
-          <Text style={styles.rowShare}>you {formatMoney(yourShareCents)}</Text>
-        ) : (
-          <Text style={styles.rowShare}>not yours</Text>
-        )}
+      <View style={styles.rowRight}>
+        {entry.amountCents !== null ? (
+          <Text style={styles.rowAmount}>{formatMoney(entry.amountCents)}</Text>
+        ) : null}
+        {!entry.actionable ? <Text style={styles.rowTime}>{feedTimeAgo(entry.at)}</Text> : null}
       </View>
-    </Tappable>
+    </View>
   );
-}
-
-/* ---------------------------------------------------------------------- */
-
-type Section =
-  | { type: 'header'; key: string; label: string; totalCents: number }
-  | { type: 'expense'; key: string; expense: LedgerExpense };
-
-/** Flattens into day-grouped rows, each header carrying that day's total. */
-function groupByDay(expenses: LedgerExpense[]): Section[] {
-  const sections: Section[] = [];
-  const dayTotals = new Map<string, number>();
-
-  for (const expense of expenses) {
-    const day = expense.created_at.slice(0, 10);
-    dayTotals.set(day, (dayTotals.get(day) ?? 0) + expense.amountCents);
-  }
-
-  let currentDay: string | null = null;
-
-  for (const expense of expenses) {
-    const day = expense.created_at.slice(0, 10);
-    if (day !== currentDay) {
-      currentDay = day;
-      sections.push({
-        type: 'header',
-        key: `day-${day}`,
-        label: formatDayLabel(expense.created_at),
-        totalCents: dayTotals.get(day) ?? 0,
-      });
-    }
-    sections.push({ type: 'expense', key: expense.id, expense });
-  }
-
-  return sections;
-}
-
-function formatDayLabel(isoTimestamp: string): string {
-  const date = new Date(isoTimestamp);
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-
-  const sameDay = (a: Date, b: Date) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-
-  if (sameDay(date, today)) return 'Today';
-  if (sameDay(date, yesterday)) return 'Yesterday';
-
-  return date.toLocaleDateString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric',
-  });
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  searchWrap: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
+  list: { padding: spacing.lg, paddingTop: 0, paddingBottom: spacing.xxl, gap: spacing.sm },
+  header: { gap: spacing.md, marginBottom: spacing.sm },
 
-  nudge: {
+  glance: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    backgroundColor: colors.primarySoft,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  nudgeBody: { flex: 1, gap: 2 },
-  nudgeTitle: { ...typography.bodyStrong, fontSize: 14, color: colors.primary },
-  nudgeText: { ...typography.caption, color: colors.primary, opacity: 0.85, lineHeight: 16 },
-  list: { padding: spacing.lg, paddingTop: 0, paddingBottom: 130, gap: spacing.sm },
-
-  monthRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  monthLabel: { ...typography.label },
-  monthTotal: { ...typography.money, fontSize: 17 },
-
-  quickBlock: { gap: spacing.xs, marginBottom: spacing.sm },
-  quickLabel: { ...typography.label },
-  quickRow: { gap: spacing.sm, paddingVertical: spacing.xs, paddingRight: spacing.lg },
-  quickChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    maxWidth: 190,
+    padding: spacing.md,
   },
-  quickChipBusy: { opacity: 0.5 },
-  quickChipTitle: { ...typography.caption, color: colors.text, fontWeight: '700' },
-  quickChipAmount: { ...typography.money, fontSize: 13 },
-
-  dayHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  dayHeader: { ...typography.label },
-  dayTotal: { ...typography.caption, fontWeight: '700' },
+  glanceBody: { flex: 1, gap: 2 },
+  glanceTitle: { ...typography.bodyStrong },
+  glanceMeta: { ...typography.caption },
 
   row: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: spacing.md,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
@@ -473,27 +371,12 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
-  rowBody: { flex: 1, gap: 4 },
-  rowTitleLine: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  rowTitle: { ...typography.bodyStrong, flexShrink: 1 },
-  rowMetaLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  rowMeta: { ...typography.caption },
-  rowAmounts: { alignItems: 'flex-end', gap: 2 },
-  rowAmount: { ...typography.money },
-  rowShare: { ...typography.caption, fontSize: 11 },
-
-  fab: {
-    position: 'absolute',
-    left: spacing.lg,
-    right: spacing.lg,
-    bottom: spacing.lg,
-    height: 54,
-    borderRadius: radius.md,
-    backgroundColor: colors.primary,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-  },
-  fabLabel: { color: colors.textInverse, fontSize: 16, fontWeight: '700' },
+  rowActionable: { borderColor: colors.warning, borderWidth: 1.5 },
+  rowBody: { flex: 1, gap: 3 },
+  rowTitle: { ...typography.body, lineHeight: 20 },
+  rowDetail: { ...typography.caption },
+  rowAction: { alignSelf: 'flex-start', marginTop: spacing.xs },
+  rowRight: { alignItems: 'flex-end', gap: 2 },
+  rowAmount: { ...typography.money, fontSize: 14 },
+  rowTime: { ...typography.caption, fontSize: 11 },
 });

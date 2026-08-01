@@ -90,7 +90,7 @@ export function useGroups() {
       if (isMissingFunction(rpcError)) {
         summariesRpcMissing = true;
         console.warn(
-          '[RoomLedger] get_my_group_summaries missing — apply 0004_group_summaries.sql for a faster home screen.'
+          '[RoomLedger] get_my_group_summaries missing — run supabase/apply_all.sql for a faster home screen.'
         );
       } else if (rpcError) {
         setError(rpcError.message);

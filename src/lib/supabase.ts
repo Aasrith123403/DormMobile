@@ -67,6 +67,11 @@ export function friendlyError(error: unknown): string {
   if (/Email not confirmed/i.test(message)) {
     return 'Confirm your email from the link we sent, or turn off “Confirm email” in Supabase for testing.';
   }
+  // A missing function or relationship almost always means a migration in
+  // supabase/migrations/ has not been applied yet.
+  if (/could not find the function|could not find a relationship|could not find the table/i.test(message)) {
+    return 'This needs a database update — apply the latest file in supabase/migrations/ and try again.';
+  }
   if (/row-level security|violates row-level/i.test(message)) {
     return "You don't have access to that group.";
   }

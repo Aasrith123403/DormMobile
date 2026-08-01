@@ -2,6 +2,8 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { toCents } from '../core/money';
 import type {
+  ChoreCompletionRow,
+  ChoreRow,
   ExpenseRow,
   GroupRow,
   GroupStatusRow,
@@ -36,6 +38,11 @@ export interface GroupSubscription extends SubscriptionRow {
   memberIds: string[];
 }
 
+/** A chore with its completion history, newest first. */
+export interface GroupChore extends ChoreRow {
+  completions: ChoreCompletionRow[];
+}
+
 export interface GroupSnapshot {
   group: GroupRow | null;
   members: MemberProfile[];
@@ -43,6 +50,7 @@ export interface GroupSnapshot {
   settlements: SettlementRow[];
   subscriptions: GroupSubscription[];
   supplyItems: SupplyItemRow[];
+  chores: GroupChore[];
   statuses: GroupStatusRow[];
   loading: boolean;
   error: string | null;
@@ -59,6 +67,7 @@ export const EMPTY_SNAPSHOT: GroupSnapshot = Object.freeze({
   settlements: [],
   subscriptions: [],
   supplyItems: [],
+  chores: [],
   statuses: [],
   loading: true,
   error: null,
@@ -88,6 +97,35 @@ const DISPOSE_DELAY_MS = 15_000;
 
 let channelSequence = 0;
 
+/**
+ * Optional parts of the schema that a project may not have migrated yet.
+ * Detected once on first failure and remembered, so a missing migration costs
+ * one extra round trip rather than one per refresh.
+ *
+ * This exists because the alternative is worse than degraded data: the
+ * expenses query embeds expense_payers, and PostgREST fails the *whole*
+ * query when the relationship is absent — which blanked the entire group
+ * screen, members and all, over an optional feature.
+ */
+const degraded = { payers: false, chores: false };
+let warnedCatchUp = false;
+
+/** True for "table/relationship/column does not exist" from PostgREST. */
+function isMissingSchema(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  const code = error.code ?? '';
+  const message = error.message ?? '';
+
+  return (
+    code === 'PGRST200' || // no such relationship in the schema cache
+    code === 'PGRST205' || // no such table
+    code === '42P01' || // undefined_table
+    code === '42703' || // undefined_column
+    /could not find (a relationship|the table)/i.test(message) ||
+    /does not exist/i.test(message)
+  );
+}
+
 function getEntry(groupId: string): GroupEntry {
   let entry = entries.get(groupId);
   if (!entry) {
@@ -116,17 +154,75 @@ function setSnapshot(groupId: string, patch: Partial<GroupSnapshot>): void {
 
 /* ------------------------------------------------------------- loading -- */
 
+/**
+ * Expenses, with the multi-payer embed only if the project has that table.
+ * 0003_multiple_payers.sql is optional; without it every expense simply has
+ * a single payer, which is what `payersOf` already assumes.
+ */
+async function fetchExpenses(groupId: string) {
+  const base = supabase
+    .from('expenses')
+    .select('*, splits(user_id, share_amount)')
+    .eq('group_id', groupId)
+    .order('created_at', { ascending: false });
+
+  if (degraded.payers) return base;
+
+  const withPayers = await supabase
+    .from('expenses')
+    .select('*, splits(user_id, share_amount), expense_payers(user_id, amount)')
+    .eq('group_id', groupId)
+    .order('created_at', { ascending: false });
+
+  if (!withPayers.error) return withPayers;
+
+  if (isMissingSchema(withPayers.error)) {
+    degraded.payers = true;
+    console.warn(
+      '[RoomLedger] expense_payers missing — run supabase/apply_all.sql to enable paying separately.'
+    );
+    return base;
+  }
+
+  return withPayers;
+}
+
+/** Chores, or an empty list if 0005_household.sql has not been applied. */
+async function fetchChores(groupId: string) {
+  if (degraded.chores) return { data: [], error: null };
+
+  const result = await supabase
+    .from('chores')
+    .select('*, chore_completions(id, chore_id, user_id, completed_at)')
+    .eq('group_id', groupId)
+    .order('next_due');
+
+  if (!result.error) return result;
+
+  if (isMissingSchema(result.error)) {
+    degraded.chores = true;
+    console.warn('[RoomLedger] chores missing — run supabase/apply_all.sql to enable chores.');
+    return { data: [], error: null };
+  }
+
+  return result;
+}
+
 async function fetchGroup(groupId: string): Promise<void> {
   try {
-    const [groupRes, membershipRes, expenseRes, settlementRes, subscriptionRes, supplyRes, statusRes] =
-      await Promise.all([
+    const [
+      groupRes,
+      membershipRes,
+      expenseRes,
+      settlementRes,
+      subscriptionRes,
+      supplyRes,
+      statusRes,
+      choreRes,
+    ] = await Promise.all([
         supabase.from('groups').select('*').eq('id', groupId).maybeSingle(),
         supabase.from('memberships').select('*').eq('group_id', groupId),
-        supabase
-          .from('expenses')
-          .select('*, splits(user_id, share_amount), expense_payers(user_id, amount)')
-          .eq('group_id', groupId)
-          .order('created_at', { ascending: false }),
+        fetchExpenses(groupId),
         supabase
           .from('settlements')
           .select('*')
@@ -139,6 +235,7 @@ async function fetchGroup(groupId: string): Promise<void> {
           .order('next_charge_date', { ascending: true }),
         supabase.from('supply_items').select('*').eq('group_id', groupId).order('created_at'),
         supabase.from('group_status').select('*').eq('group_id', groupId),
+        fetchChores(groupId),
       ]);
 
     const firstError =
@@ -148,7 +245,8 @@ async function fetchGroup(groupId: string): Promise<void> {
       settlementRes.error ??
       subscriptionRes.error ??
       supplyRes.error ??
-      statusRes.error;
+      statusRes.error ??
+      choreRes.error;
     if (firstError) throw firstError;
 
     const memberships = (membershipRes.data ?? []) as MembershipRow[];
@@ -211,7 +309,28 @@ async function fetchGroup(groupId: string): Promise<void> {
         memberIds: (row.subscription_members ?? []).map((m) => m.user_id),
       })),
 
-      supplyItems: (supplyRes.data ?? []) as SupplyItemRow[],
+      // Columns added in 0005 are absent on an un-migrated project, so give
+      // them their default rather than letting `undefined` reach the UI.
+      supplyItems: ((supplyRes.data ?? []) as Partial<SupplyItemRow>[]).map((row) => ({
+        ...(row as SupplyItemRow),
+        is_needed: row.is_needed ?? false,
+        needed_at: row.needed_at ?? null,
+        needed_by: row.needed_by ?? null,
+        last_bought_by: row.last_bought_by ?? null,
+        last_bought_at: row.last_bought_at ?? null,
+      })),
+
+      chores: ((choreRes.data ?? []) as unknown as (ChoreRow & {
+        chore_completions: ChoreCompletionRow[];
+      })[]).map(
+        (row) => ({
+          ...row,
+          completions: [...(row.chore_completions ?? [])].sort((a, b) =>
+            b.completed_at.localeCompare(a.completed_at)
+          ),
+        })
+      ),
+
       statuses: (statusRes.data ?? []) as GroupStatusRow[],
       loading: false,
       error: null,
@@ -293,12 +412,20 @@ function startRealtime(groupId: string): () => void {
   try {
     open(
       '',
-      ['expenses', 'settlements', 'subscriptions', 'supply_items', 'group_status', 'memberships'],
+      [
+        'expenses',
+        'settlements',
+        'subscriptions',
+        'supply_items',
+        'group_status',
+        'memberships',
+        'chores',
+      ],
       `group_id=eq.${groupId}`
     );
     // splits and subscription_members carry no group_id to filter on; RLS
     // still limits the stream to rows in the user's own groups.
-    open('-links', ['splits', 'subscription_members', 'expense_payers']);
+    open('-links', ['splits', 'subscription_members', 'expense_payers', 'chore_completions']);
   } catch (caught) {
     console.warn('[RoomLedger] realtime unavailable, falling back to manual refresh:', caught);
   }
@@ -340,11 +467,20 @@ export function subscribeToGroup(groupId: string, listener: () => void): () => v
       // Catch-up on open: generate any subscription charges that came due
       // while the app was closed, so balances are already correct by the
       // time the ledger renders.
-      void supabase
-        .rpc('generate_due_subscription_charges', { p_group_id: groupId })
-        .then(({ error }) => {
-          if (error) {
-            console.warn('[RoomLedger] subscription catch-up skipped:', error.message);
+      void Promise.all([
+        supabase.rpc('generate_due_subscription_charges', { p_group_id: groupId }),
+        supabase.rpc('generate_due_repeating_expenses', { p_group_id: groupId }),
+      ])
+        .then((results) => {
+          for (const { error } of results) {
+            // A missing RPC (migration not applied) must not block the ledger.
+            // Warned once per session: the message cannot change mid-run.
+            if (error && !warnedCatchUp) {
+              warnedCatchUp = true;
+              console.warn(
+                '[RoomLedger] recurring catch-up unavailable — run supabase/apply_all.sql.'
+              );
+            }
           }
         })
         .then(() => refreshGroup(groupId));

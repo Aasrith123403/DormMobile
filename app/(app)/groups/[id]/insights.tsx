@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { GroupHeader } from '../../../../src/components/GroupHeader';
@@ -19,6 +19,13 @@ import {
   filterByRange,
   formatMonth,
 } from '../../../../src/core/insights';
+import {
+  currentMonthKey,
+  monthLabel,
+  monthsWithActivity,
+  previousMonthKey,
+  summarizeMonth,
+} from '../../../../src/core/spendSummary';
 import { useAuth } from '../../../../src/data/auth';
 import { useGroup } from '../../../../src/data/groupContext';
 import { colors, radius, spacing, typography } from '../../../../src/theme';
@@ -33,6 +40,26 @@ export default function InsightsScreen() {
 
   const [range, setRange] = useState<InsightRange>('month');
   const [refreshing, setRefreshing] = useState(false);
+  const [summaryMonth, setSummaryMonth] = useState(currentMonthKey());
+
+  /** Shared shape for the month-end summary, derived from existing expenses. */
+  const summaryRows = useMemo(
+    () =>
+      expenses.map((e) => ({
+        amountCents: e.amountCents,
+        paidBy: e.paid_by,
+        category: e.category,
+        createdAt: e.created_at,
+        splits: e.splits,
+        payers: e.payers,
+      })),
+    [expenses]
+  );
+
+  const monthSummary = useMemo(
+    () => summarizeMonth(summaryRows, summaryMonth, members.map((m) => m.id)),
+    [summaryRows, summaryMonth, members]
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -77,6 +104,58 @@ export default function InsightsScreen() {
           value={range}
           onChange={setRange}
         />
+
+        {monthSummary && !monthSummary.isEmpty ? (
+          <Card style={styles.card}>
+            <View style={styles.summaryHead}>
+              <Text style={styles.cardTitle}>{monthSummary.label}</Text>
+              {monthSummary.changeVsPreviousCents !== null ? (
+                <Text
+                  style={[
+                    styles.change,
+                    {
+                      color:
+                        monthSummary.changeVsPreviousCents > 0 ? colors.negative : colors.positive,
+                    },
+                  ]}
+                >
+                  {monthSummary.changeVsPreviousCents > 0 ? '▲' : '▼'}{' '}
+                  {formatMoney(Math.abs(monthSummary.changeVsPreviousCents))} vs{' '}
+                  {monthLabel(previousMonthKey(monthSummary.month))}
+                </Text>
+              ) : null}
+            </View>
+
+            <Text style={styles.summaryTotal}>{formatMoney(monthSummary.totalCents)}</Text>
+            <Text style={styles.statMeta}>
+              {monthSummary.expenseCount}{' '}
+              {monthSummary.expenseCount === 1 ? 'expense' : 'expenses'} across the house
+            </Text>
+
+            {monthsWithActivity(summaryRows).length > 1 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.monthRow}>
+                {monthsWithActivity(summaryRows)
+                  .slice(0, 6)
+                  .map((key) => (
+                    <Pressable
+                      key={key}
+                      onPress={() => setSummaryMonth(key)}
+                      style={[styles.monthChip, key === summaryMonth && styles.monthChipActive]}
+                    >
+                      <Text
+                        style={[
+                          styles.monthChipText,
+                          key === summaryMonth && styles.monthChipTextActive,
+                        ]}
+                      >
+                        {monthLabel(key)}
+                      </Text>
+                    </Pressable>
+                  ))}
+              </ScrollView>
+            ) : null}
+          </Card>
+        ) : null}
 
         {insights.expenseCount === 0 ? (
           <EmptyState
@@ -214,6 +293,20 @@ const styles = StyleSheet.create({
   statLabel: { ...typography.label },
   statValue: { ...typography.moneyLarge, fontSize: 23 },
   statMeta: { ...typography.caption },
+
+  summaryHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
+  summaryTotal: { ...typography.hero, fontSize: 34, marginTop: -spacing.xs },
+  change: { ...typography.caption, fontWeight: '700' },
+  monthRow: { gap: spacing.sm, paddingTop: spacing.xs },
+  monthChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceAlt,
+  },
+  monthChipActive: { backgroundColor: colors.primarySoft },
+  monthChipText: { ...typography.caption, fontWeight: '700' },
+  monthChipTextActive: { color: colors.primary },
 
   card: { gap: spacing.md },
   cardTitle: { ...typography.heading },

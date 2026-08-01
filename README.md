@@ -48,10 +48,11 @@ screen.
 1. Create a project at [supabase.com](https://supabase.com).
 2. Open **SQL Editor → New query**.
 3. Paste the entire contents of [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) and click **Run**.
-4. Repeat with each later migration in order:
-   [`0002_categories.sql`](supabase/migrations/0002_categories.sql),
-   [`0003_multiple_payers.sql`](supabase/migrations/0003_multiple_payers.sql),
-   [`0004_group_summaries.sql`](supabase/migrations/0004_group_summaries.sql).
+4. Paste [`supabase/apply_all.sql`](supabase/apply_all.sql) and click **Run**.
+   That is 0002–0005 concatenated in apply order, so it is one paste rather
+   than four. (The individual files are still in `supabase/migrations/` if you
+   prefer to apply them one at a time, but the order matters — 0004 references
+   a table 0003 creates.)
 
 Each one degrades gracefully if skipped: without 0002 expenses save without a
 category, without 0003 there is no multi-payer support, and without 0004 the

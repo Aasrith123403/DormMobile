@@ -35,6 +35,15 @@ export default function GroupLayout() {
         <Tabs.Screen
           name="index"
           options={{
+            title: 'Home',
+            tabBarIcon: ({ color, size, focused }) => (
+              <Ionicons name={focused ? 'home' : 'home-outline'} size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="ledger"
+          options={{
             title: 'Ledger',
             tabBarIcon: ({ color, size, focused }) => (
               <Ionicons name={focused ? 'receipt' : 'receipt-outline'} size={size} color={color} />
@@ -67,21 +76,14 @@ export default function GroupLayout() {
             ),
           }}
         />
-        <Tabs.Screen
-          name="subscriptions"
-          options={{
-            title: 'Plans',
-            tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons name={focused ? 'repeat' : 'repeat-outline'} size={size} color={color} />
-            ),
-          }}
-        />
+        {/* Reachable from the Ledger header; six tabs is too many. */}
+        <Tabs.Screen name="subscriptions" options={{ href: null }} />
         <Tabs.Screen
           name="house"
           options={{
             title: 'House',
             tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons name={focused ? 'home' : 'home-outline'} size={size} color={color} />
+              <Ionicons name={focused ? 'grid' : 'grid-outline'} size={size} color={color} />
             ),
           }}
         />

@@ -21,7 +21,6 @@ import { choose, notify } from '../../../src/components/dialog';
 import { commitFeedback, successFeedback } from '../../../src/components/haptics';
 import {
   Avatar,
-  AvatarStack,
   Button,
   Card,
   ErrorBanner,
@@ -34,6 +33,7 @@ import { applyKey, displayAmount } from '../../../src/core/amountInput';
 import { CategoryId, detectCategory, getCategory } from '../../../src/core/categories';
 import { formatMoney, parseAmountInput } from '../../../src/core/money';
 import {
+  SplitLine,
   SplitMode,
   SplitParticipant,
   assignRemainderTo,
@@ -61,58 +61,60 @@ export default function NewExpenseRoute() {
 }
 
 /**
- * Logging an expense is the app's hot path, so the whole thing lives on one
- * screen with no system keyboard: type the amount on the pad, tap a
- * category, save. Payer and split default to "you paid, everyone splits
- * evenly" and stay collapsed behind a one-line summary — the common case
- * needs no interaction with them at all.
+ * Two genuinely different situations, not one situation with options:
+ *
+ *   'one'        — somebody covered the bill and it gets split. There is a
+ *                  total, a payer, and a question about who owes what.
+ *   'separately' — everyone paid their own way. Each person's amount IS their
+ *                  share, the total is just the sum, and nobody owes anybody.
+ *
+ * Keeping them separate is what removes the confusion: 'separately' has no
+ * split step, no total to reconcile against, and no way to be "over" or
+ * "short", because there is nothing for the numbers to disagree with.
  */
+type PayMode = 'one' | 'separately';
+
+/** What the shared keypad is currently driving. */
+type EditTarget = { kind: 'total' } | { kind: 'member'; userId: string };
+
 function NewExpenseScreen() {
   const router = useRouter();
   const { userId } = useAuth();
   const { groupId, members, loading } = useGroup();
 
-  const [amountRaw, setAmountRaw] = useState('');
-  const [description, setDescription] = useState('');
-  const [category, setCategory] = useState<CategoryId | null>(null);
-  /** Set once the user picks a category by hand, so guesses stop overriding. */
-  const [categoryTouched, setCategoryTouched] = useState(false);
+  const [payMode, setPayMode] = useState<PayMode>('one');
+
+  /* ------------------------------------------------------- one payer -- */
 
   const [paidBy, setPaidBy] = useState<string | null>(userId);
-  /**
-   * Who put money in. One payer is the overwhelmingly common case and stays
-   * a single tap; `payerCents` only comes into play once "Split the bill" is
-   * turned on, and then it must add up to the total exactly.
-   */
-  const [multiPayer, setMultiPayer] = useState(false);
-  const [payerCents, setPayerCents] = useState<Record<string, number>>({});
   const [participants, setParticipants] = useState<SplitParticipant[] | null>(null);
-  const [mode, setMode] = useState<SplitMode>('even');
-  const [splitOpen, setSplitOpen] = useState(false);
-  /**
-   * What the keypad is editing. Custom shares reuse the same pad as the
-   * total, so no system keyboard ever covers the row being edited — which is
-   * exactly how the old text-field version became unusable on a phone.
-   */
-  const [editing, setEditing] = useState<
-    { kind: 'total' } | { kind: 'member'; userId: string } | { kind: 'payer'; userId: string }
-  >({ kind: 'total' });
-  const [editingPristine, setEditingPristine] = useState(false);
-  /**
-   * The digit string for the share being edited. Kept as text, not derived
-   * from cents: "15." is a valid thing to have typed so far, and a cents
-   * round-trip would drop the decimal point before the next key arrived.
-   */
-  const [shareRaw, setShareRaw] = useState('');
-  const [payerRaw, setPayerRaw] = useState('');
-  /**
-   * Whether anyone's share has been set by hand. Until then, custom shares
-   * follow the total automatically — otherwise switching to Custom and then
-   * correcting the amount leaves the shares stranded at the old figure and
-   * Save refuses with no obvious cause.
-   */
+  const [splitMode, setSplitMode] = useState<SplitMode>('even');
   const [sharesTouched, setSharesTouched] = useState(false);
+  const [amountRaw, setAmountRaw] = useState('');
 
+  /* ------------------------------------------------------ separately -- */
+
+  /** What each person paid for themselves. The total is simply the sum. */
+  const [ownCents, setOwnCents] = useState<Record<string, number>>({});
+
+  /* ---------------------------------------------------------- keypad -- */
+
+  /**
+   * Digit strings, held as text rather than derived from cents: "15." is a
+   * valid thing to have typed so far, and a cents round-trip would drop the
+   * decimal point before the next key arrived.
+   */
+  const [memberRaw, setMemberRaw] = useState('');
+  const [editing, setEditing] = useState<EditTarget>({ kind: 'total' });
+  /** The first digit after picking a field replaces what was there. */
+  const [editingPristine, setEditingPristine] = useState(false);
+
+  /* --------------------------------------------------------- details -- */
+
+  const [description, setDescription] = useState('');
+  const [category, setCategory] = useState<CategoryId | null>(null);
+  const [categoryTouched, setCategoryTouched] = useState(false);
+  const [repeatMonthly, setRepeatMonthly] = useState(false);
   const [receiptUri, setReceiptUri] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanNote, setScanNote] = useState<string | null>(null);
@@ -120,80 +122,81 @@ function NewExpenseScreen() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const amountCents = parseAmountInput(amountRaw) ?? 0;
+  const separately = payMode === 'separately';
 
-  // Default: everyone in, split evenly.
+  /* ---------------------------------------------------------- totals -- */
+
+  const ownList = members
+    .map((m) => ({ userId: m.id, paidCents: Math.round(ownCents[m.id] ?? 0) }))
+    .filter((p) => p.paidCents > 0);
+
+  const separateTotal = ownList.reduce((sum, p) => sum + p.paidCents, 0);
+
+  // In 'separately' the total is derived, so the two can never disagree.
+  const amountCents = separately ? separateTotal : (parseAmountInput(amountRaw) ?? 0);
+
   const effectiveParticipants = useMemo<SplitParticipant[]>(
     () => participants ?? members.map((member) => ({ userId: member.id, included: true })),
     [participants, members]
   );
 
   const split = useMemo(
-    () => computeSplits(amountCents, effectiveParticipants, mode),
-    [amountCents, effectiveParticipants, mode]
+    () => computeSplits(amountCents, effectiveParticipants, splitMode),
+    [amountCents, effectiveParticipants, splitMode]
   );
 
   const includedMembers = members.filter(
     (member) => effectiveParticipants.find((p) => p.userId === member.id)?.included
   );
 
-  // Auto-categorise from whatever the user typed, until they choose one.
+  const remaining = splitMode === 'custom' ? remainderCents(amountCents, effectiveParticipants) : 0;
+  const perPersonCents =
+    includedMembers.length > 0 ? Math.round(amountCents / includedMembers.length) : 0;
+
+  /**
+   * Paying separately means each person's share is exactly what they put in,
+   * so the expense nets to zero for everyone — which is why there is no
+   * "you owe" anywhere in this mode.
+   */
+  const separateSplits: SplitLine[] = ownList.map((p) => ({
+    userId: p.userId,
+    shareCents: p.paidCents,
+  }));
+
+  /* --------------------------------------------------------- effects -- */
+
   useEffect(() => {
     if (categoryTouched) return;
-    const guess = detectCategory(description);
-    setCategory(guess);
+    setCategory(detectCategory(description));
   }, [description, categoryTouched]);
 
   useEffect(() => {
     if (paidBy === null && userId) setPaidBy(userId);
   }, [userId, paidBy]);
 
-  const toggleMember = (memberId: string) => {
-    const next = effectiveParticipants.map((p) =>
-      p.userId === memberId ? { ...p, included: !p.included } : p
+  // Untouched custom shares follow the total, so correcting the amount never
+  // strands them at the old figure.
+  useEffect(() => {
+    if (separately || splitMode !== 'custom' || sharesTouched) return;
+    setParticipants((current) =>
+      seedCustomShares(amountCents, current ?? members.map((m) => ({ userId: m.id, included: true })))
     );
-    // Re-seed an untouched custom split so removing someone does not leave a
-    // gap the user has to close by hand.
-    setParticipants(mode === 'custom' && !sharesTouched ? seedCustomShares(amountCents, next) : next);
+  }, [amountCents, splitMode, sharesTouched, members, separately]);
 
-    if (editing.kind === 'member' && editing.userId === memberId) {
-      selectForEditing({ kind: 'total' });
-    }
-  };
+  /* ---------------------------------------------------------- keypad -- */
 
-  const switchMode = (next: SplitMode) => {
-    if (next === mode) return;
+  const editingRaw = editing.kind === 'total' ? amountRaw : memberRaw;
 
-    if (next === 'custom') {
-      // Seed from the even split so the form starts valid and already adds
-      // up. The keypad deliberately stays on the total: silently handing it
-      // to one person means the next thing typed rewrites their share
-      // instead of the amount, which is impossible to notice.
-      setParticipants(seedCustomShares(amountCents, effectiveParticipants));
-    }
+  const currentCentsFor = (memberId: string) =>
+    separately
+      ? Math.round(ownCents[memberId] ?? 0)
+      : Math.round(effectiveParticipants.find((p) => p.userId === memberId)?.customCents ?? 0);
 
-    selectForEditing({ kind: 'total' });
-    setMode(next);
-  };
-
-  /** The digit string the keypad is currently editing. */
-  const editingRaw =
-    editing.kind === 'total' ? amountRaw : editing.kind === 'payer' ? payerRaw : shareRaw;
-
-  const selectForEditing = (
-    target: { kind: 'total' } | { kind: 'member'; userId: string } | { kind: 'payer'; userId: string }
-  ) => {
+  const selectForEditing = (target: EditTarget) => {
     setEditing(target);
 
-    if (target.kind === 'payer') {
-      setPayerRaw(centsToRaw(Math.round(payerCents[target.userId] ?? 0)));
-      setEditingPristine(true);
-    } else if (target.kind === 'member') {
-      setShareRaw(
-        centsToRaw(effectiveParticipants.find((p) => p.userId === target.userId)?.customCents ?? 0)
-      );
-      // Calculator behaviour: the first digit after picking a person replaces
-      // their seeded share, so tapping and typing just works.
+    if (target.kind === 'member') {
+      setMemberRaw(centsToRaw(currentCentsFor(target.userId)));
       setEditingPristine(true);
     } else {
       setEditingPristine(false);
@@ -210,15 +213,15 @@ function NewExpenseScreen() {
       return;
     }
 
-    if (editing.kind === 'payer') {
-      setPayerRaw(next);
-      setPayerCents((current) => ({ ...current, [editing.userId]: parseAmountInput(next) ?? 0 }));
+    setMemberRaw(next);
+    const cents = parseAmountInput(next) ?? 0;
+
+    if (separately) {
+      setOwnCents((current) => ({ ...current, [editing.userId]: cents }));
       return;
     }
 
-    setShareRaw(next);
     setSharesTouched(true);
-    const cents = parseAmountInput(next) ?? 0;
     setParticipants(
       effectiveParticipants.map((p) =>
         p.userId === editing.userId ? { ...p, customCents: cents } : p
@@ -226,45 +229,61 @@ function NewExpenseScreen() {
     );
   };
 
-  // Keep untouched custom shares in step with the total.
-  useEffect(() => {
-    if (mode !== 'custom' || sharesTouched) return;
-    setParticipants((current) =>
-      seedCustomShares(amountCents, current ?? members.map((m) => ({ userId: m.id, included: true })))
+  /* ------------------------------------------------------------ mode -- */
+
+  const switchPayMode = (next: PayMode) => {
+    if (next === payMode) return;
+    setPayMode(next);
+
+    if (next === 'separately') {
+      // Seed with whatever total was already typed, on the person who paid,
+      // so switching mid-entry does not throw the number away.
+      const seed = parseAmountInput(amountRaw) ?? 0;
+      const first = paidBy ?? members[0]?.id;
+
+      setOwnCents(seed > 0 && first ? { [first]: seed } : {});
+      if (first) {
+        setEditing({ kind: 'member', userId: first });
+        setMemberRaw(seed > 0 ? centsToRaw(seed) : '');
+        setEditingPristine(seed > 0);
+      }
+    } else {
+      // Carry the separate total back as the bill total.
+      setAmountRaw(separateTotal > 0 ? centsToRaw(separateTotal) : '');
+      setOwnCents({});
+      setEditing({ kind: 'total' });
+      setEditingPristine(false);
+      setSharesTouched(false);
+      setParticipants(null);
+      setSplitMode('even');
+    }
+  };
+
+  const toggleMember = (memberId: string) => {
+    const next = effectiveParticipants.map((p) =>
+      p.userId === memberId ? { ...p, included: !p.included } : p
     );
-  }, [amountCents, mode, sharesTouched, members]);
+    setParticipants(
+      splitMode === 'custom' && !sharesTouched ? seedCustomShares(amountCents, next) : next
+    );
+
+    if (editing.kind === 'member' && editing.userId === memberId) {
+      selectForEditing({ kind: 'total' });
+    }
+  };
+
+  const switchSplitMode = (next: SplitMode) => {
+    if (next === splitMode) return;
+    if (next === 'custom') setParticipants(seedCustomShares(amountCents, effectiveParticipants));
+    selectForEditing({ kind: 'total' });
+    setSplitMode(next);
+  };
 
   const giveRestTo = (memberId: string) => {
     setSharesTouched(true);
     const next = assignRemainderTo(amountCents, effectiveParticipants, memberId);
     setParticipants(next);
-    // The shortcut rewrites the amount, so resync what the keypad shows.
-    setShareRaw(centsToRaw(next.find((p) => p.userId === memberId)?.customCents ?? 0));
-    setEditingPristine(true);
-  };
-
-  const toggleMultiPayer = (on: boolean) => {
-    setMultiPayer(on);
-    selectForEditing({ kind: 'total' });
-
-    if (on) {
-      // Seed with the single payer covering the whole bill, so the starting
-      // state already adds up and only needs adjusting.
-      setPayerCents(paidBy ? { [paidBy]: amountCents } : {});
-    } else {
-      setPayerCents({});
-    }
-  };
-
-  /** Closes the gap between contributions and the total in one tap. */
-  const givePayerRestTo = (memberId: string) => {
-    const others = members
-      .filter((m) => m.id !== memberId)
-      .reduce((sum, m) => sum + Math.round(payerCents[m.id] ?? 0), 0);
-    const next = Math.max(0, amountCents - others);
-
-    setPayerCents((current) => ({ ...current, [memberId]: next }));
-    setPayerRaw(centsToRaw(next));
+    setMemberRaw(centsToRaw(next.find((p) => p.userId === memberId)?.customCents ?? 0));
     setEditingPristine(true);
   };
 
@@ -273,23 +292,12 @@ function NewExpenseScreen() {
     const next = seedCustomShares(amountCents, effectiveParticipants);
     setParticipants(next);
     if (editing.kind === 'member') {
-      setShareRaw(centsToRaw(next.find((p) => p.userId === editing.userId)?.customCents ?? 0));
+      setMemberRaw(centsToRaw(next.find((p) => p.userId === editing.userId)?.customCents ?? 0));
       setEditingPristine(true);
     }
   };
 
-  const remaining = mode === 'custom' ? remainderCents(amountCents, effectiveParticipants) : 0;
-
-  const payerList = multiPayer
-    ? members
-        .map((m) => ({ userId: m.id, paidCents: Math.round(payerCents[m.id] ?? 0) }))
-        .filter((p) => p.paidCents > 0)
-    : [];
-  const payerTotal = payerList.reduce((sum, p) => sum + p.paidCents, 0);
-  const payerRemaining = multiPayer ? amountCents - payerTotal : 0;
-  const payersValid = !multiPayer || (payerList.length > 1 && payerRemaining === 0);
-
-  /* ------------------------------------------------------------ receipt -- */
+  /* -------------------------------------------------------- receipt -- */
 
   const pickImage = async (source: 'camera' | 'library') => {
     const permission =
@@ -334,8 +342,10 @@ function NewExpenseScreen() {
       if (parsed.error) {
         setScanNote(parsed.error);
       } else {
-        // Suggestions only — everything stays editable before saving.
-        if (parsed.amountCents && amountRaw === '') {
+        // A scanned total is the bill total, which only means something in
+        // 'one payer' mode.
+        if (parsed.amountCents && !separately && amountRaw === '') {
+          selectForEditing({ kind: 'total' });
           setAmountRaw((parsed.amountCents / 100).toFixed(2));
         }
         if (parsed.merchant && !description) setDescription(parsed.merchant);
@@ -364,36 +374,34 @@ function NewExpenseScreen() {
     if (source === 'camera' || source === 'library') await pickImage(source);
   };
 
-  /* --------------------------------------------------------------- save -- */
+  /* ----------------------------------------------------------- save -- */
 
-  const canSave = split.valid && Boolean(paidBy) && payersValid && !saving;
+  const canSave = separately
+    ? separateTotal > 0 && !saving
+    : split.valid && Boolean(paidBy) && !saving;
 
-  /** Why Save is unavailable, in words. A dead button with no reason is the
-   *  worst possible state to leave someone in. */
   const blockedReason = canSave
     ? null
-    : amountCents <= 0
-      ? 'Enter an amount to save.'
+    : separately
+      ? 'Enter what at least one person paid.'
       : includedMembers.length === 0
         ? 'Pick at least one person to split with.'
-        : !paidBy
-          ? 'Choose who paid.'
-          : multiPayer && payerList.length < 2
-            ? 'Enter what at least two people put in, or switch back to one payer.'
-            : multiPayer && payerRemaining !== 0
-              ? payerRemaining > 0
-                ? `Payers are ${formatMoney(payerRemaining)} short of the total.`
-                : `Payers are ${formatMoney(-payerRemaining)} over the total.`
-              : (split.error ?? null);
+        : amountCents <= 0
+          ? 'Enter an amount to save.'
+          : !paidBy
+            ? 'Choose who paid.'
+            : (split.error ?? null);
 
   const submit = async () => {
-    if (!canSave || !paidBy || !userId) return;
+    if (!canSave || !userId) return;
 
-    // `expenses.paid_by` is NOT NULL and is what older readers show, so point
-    // it at whoever put in the most.
-    const primaryPayer = multiPayer
-      ? [...payerList].sort((a, b) => b.paidCents - a.paidCents)[0]?.userId ?? paidBy
+    // `expenses.paid_by` is NOT NULL and is what simpler readers show, so
+    // point it at whoever put in the most.
+    const primaryPayer = separately
+      ? ([...ownList].sort((a, b) => b.paidCents - a.paidCents)[0]?.userId ?? userId)
       : paidBy;
+
+    if (!primaryPayer) return;
 
     commitFeedback();
     setSaving(true);
@@ -406,13 +414,15 @@ function NewExpenseScreen() {
         groupId,
         paidBy: primaryPayer,
         createdBy: userId,
-        // Description is optional now — the category names it if left blank.
         description: description.trim() || getCategory(category).label,
         amountCents,
-        splits: split.lines,
+        splits: separately ? separateSplits : split.lines,
         receiptPath,
         category,
-        payers: multiPayer ? payerList : null,
+        // More than one contributor needs payer rows so each is credited what
+        // they actually put in; a single one is just an ordinary expense.
+        payers: separately && ownList.length > 1 ? ownList : null,
+        repeatMonthly,
       });
 
       successFeedback();
@@ -425,12 +435,15 @@ function NewExpenseScreen() {
 
   if (loading && members.length === 0) return <Loading label="Loading group" />;
 
-  const payer = members.find((m) => m.id === paidBy);
-  const perPersonCents =
-    includedMembers.length > 0 ? Math.round(amountCents / includedMembers.length) : 0;
-
   const editingMember =
-    editing.kind === 'total' ? undefined : members.find((m) => m.id === editing.userId);
+    editing.kind === 'member' ? members.find((m) => m.id === editing.userId) : undefined;
+
+  const amountLabel =
+    editing.kind === 'total'
+      ? 'TOTAL'
+      : separately
+        ? `${editingMember?.id === userId ? 'YOU' : (editingMember?.name ?? 'THEY').toUpperCase()} PAID`
+        : `${editingMember?.id === userId ? 'YOUR' : `${(editingMember?.name ?? 'THEIR').toUpperCase()}’S`} SHARE`;
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -446,22 +459,182 @@ function NewExpenseScreen() {
         >
           {error ? <ErrorBanner message={error} /> : null}
 
-          {/* ---------------------------------------------------- amount -- */}
-          {/* The pad is shared between the total and individual shares, so
-              the label above the number always says which one is live —
-              without it, typing silently rewrites the wrong figure. */}
-          <Text style={[styles.amountLabel, editing.kind === 'member' && styles.amountLabelShare]}>
-            {editing.kind === 'total'
-              ? 'TOTAL'
-              : `${editingMember?.id === userId ? 'YOUR' : `${(editingMember?.name ?? 'THEIR').toUpperCase()}’S`} ${
-                  editing.kind === 'payer' ? 'CONTRIBUTION' : 'SHARE'
-                }`}
+          {/* ============================================== 1. WHO PAID = */}
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionTitle}>Who paid</Text>
+            <Segmented
+              options={[
+                { label: 'One', value: 'one' },
+                { label: 'Separately', value: 'separately' },
+              ]}
+              value={payMode}
+              onChange={(next) => switchPayMode(next as PayMode)}
+              style={styles.headToggle}
+            />
+          </View>
+
+          {separately ? (
+            <>
+              <Card padded={false} style={styles.rowCard}>
+                {members.map((member, index) => {
+                  const cents = Math.round(ownCents[member.id] ?? 0);
+                  const active = editing.kind === 'member' && editing.userId === member.id;
+
+                  return (
+                    <Pressable
+                      key={member.id}
+                      onPress={() => selectForEditing({ kind: 'member', userId: member.id })}
+                      style={[styles.personRow, index > 0 && styles.rowBordered]}
+                      accessibilityLabel={`Set what ${member.name} paid`}
+                    >
+                      <Avatar name={member.name} id={member.id} size={30} />
+                      <Text style={styles.personName} numberOfLines={1}>
+                        {member.id === userId ? 'You' : member.name}
+                      </Text>
+                      <View style={[styles.amountBox, active && styles.amountBoxActive]}>
+                        <Text style={[styles.amountBoxText, cents === 0 && styles.amountBoxEmpty]}>
+                          {formatMoney(cents)}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </Card>
+
+              <Text style={styles.hint}>
+                Everyone covered their own — nobody ends up owing anybody.
+              </Text>
+            </>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.payerRow}
+            >
+              {members.map((member) => {
+                const selected = member.id === paidBy;
+                return (
+                  <Pressable
+                    key={member.id}
+                    onPress={() => setPaidBy(member.id)}
+                    style={[styles.payerPick, selected && styles.payerPickOn]}
+                  >
+                    <Avatar name={member.name} id={member.id} size={38} />
+                    <Text
+                      style={[styles.payerName, selected && styles.payerNameOn]}
+                      numberOfLines={1}
+                    >
+                      {member.id === userId ? 'You' : member.name.split(' ')[0]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          )}
+
+          {/* ======================================= 2. SPLIT (one only) = */}
+          {/* Paying separately has no split step at all: each amount is
+              already that person's share. */}
+          {!separately ? (
+            <>
+              <View style={styles.sectionHead}>
+                <Text style={styles.sectionTitle}>Split between</Text>
+                <Segmented
+                  options={[
+                    { label: 'Even', value: 'even' },
+                    { label: 'Custom', value: 'custom' },
+                  ]}
+                  value={splitMode}
+                  onChange={switchSplitMode}
+                  style={styles.headToggle}
+                />
+              </View>
+
+              <Card padded={false} style={styles.rowCard}>
+                {members.map((member, index) => {
+                  const included =
+                    effectiveParticipants.find((p) => p.userId === member.id)?.included ?? false;
+                  const line = split.lines.find((l) => l.userId === member.id);
+                  const active = editing.kind === 'member' && editing.userId === member.id;
+
+                  return (
+                    <View key={member.id} style={[styles.personRow, index > 0 && styles.rowBordered]}>
+                      <Pressable
+                        onPress={() => toggleMember(member.id)}
+                        style={styles.personToggle}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: included }}
+                      >
+                        <Ionicons
+                          name={included ? 'checkmark-circle' : 'ellipse-outline'}
+                          size={23}
+                          color={included ? colors.primary : colors.textFaint}
+                        />
+                        <Avatar name={member.name} id={member.id} size={30} />
+                        <Text
+                          style={[styles.personName, !included && styles.personNameOff]}
+                          numberOfLines={1}
+                        >
+                          {member.id === userId ? 'You' : member.name}
+                        </Text>
+                      </Pressable>
+
+                      {included && splitMode === 'custom' ? (
+                        <Pressable
+                          onPress={() => selectForEditing({ kind: 'member', userId: member.id })}
+                          style={[styles.amountBox, active && styles.amountBoxActive]}
+                          accessibilityLabel={`Edit ${member.name}'s share`}
+                        >
+                          <Text style={styles.amountBoxText}>
+                            {formatMoney(currentCentsFor(member.id))}
+                          </Text>
+                        </Pressable>
+                      ) : (
+                        <Text style={[styles.shareText, !included && styles.personNameOff]}>
+                          {included ? formatMoney(line?.shareCents ?? 0) : '—'}
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })}
+              </Card>
+
+              {splitMode === 'custom' && amountCents > 0 ? (
+                <View style={styles.hintRow}>
+                  <Text style={[styles.hint, remaining === 0 ? styles.hintOk : styles.hintWarn]}>
+                    {remaining === 0
+                      ? 'Shares add up exactly'
+                      : remaining > 0
+                        ? `${formatMoney(remaining)} still to assign`
+                        : `${formatMoney(-remaining)} over the total`}
+                  </Text>
+                  {remaining !== 0 && editing.kind === 'member' ? (
+                    <Button
+                      title="Give rest"
+                      variant="subtle"
+                      size="sm"
+                      onPress={() => giveRestTo((editing as { userId: string }).userId)}
+                    />
+                  ) : null}
+                  {remaining !== 0 ? (
+                    <Button title="Even out" variant="subtle" size="sm" onPress={evenOut} />
+                  ) : null}
+                </View>
+              ) : null}
+            </>
+          ) : null}
+
+          {/* =============================================== 3. AMOUNT == */}
+          <View style={styles.divider} />
+
+          <Text style={[styles.amountLabel, editing.kind !== 'total' && styles.amountLabelAlt]}>
+            {amountLabel}
           </Text>
 
           <View style={styles.amountBlock}>
-            <Text style={[styles.currency, editing.kind === 'member' && styles.currencyShare]}>$</Text>
+            <Text style={[styles.currency, editing.kind !== 'total' && styles.currencyAlt]}>$</Text>
             <Text
-              style={[styles.amount, editing.kind === 'member' && styles.amountShare]}
+              style={[styles.amount, editing.kind !== 'total' && styles.amountAlt]}
               numberOfLines={1}
               adjustsFontSizeToFit
             >
@@ -469,22 +642,23 @@ function NewExpenseScreen() {
             </Text>
           </View>
 
-          {editing.kind === 'member' ? (
-            <Pressable onPress={() => selectForEditing({ kind: 'total' })} style={styles.editingBanner}>
+          {separately ? (
+            <Text style={styles.perPerson}>
+              {separateTotal > 0
+                ? `Total ${formatMoney(separateTotal)} · nobody owes anyone`
+                : 'Tap a name, then type what they paid'}
+            </Text>
+          ) : editing.kind !== 'total' ? (
+            <Pressable onPress={() => selectForEditing({ kind: 'total' })} style={styles.backToTotal}>
               <Ionicons name="arrow-back-circle-outline" size={15} color={colors.primary} />
-              <Text style={styles.editingBannerText}>
+              <Text style={styles.backToTotalText}>
                 of {formatMoney(amountCents)} total — tap to edit the total
               </Text>
             </Pressable>
           ) : amountCents > 0 && includedMembers.length > 0 ? (
             <Text style={styles.perPerson}>
-              {mode === 'even'
-                ? `${formatMoney(perPersonCents)} each · ${includedMembers.length} ${
-                    includedMembers.length === 1 ? 'person' : 'people'
-                  }`
-                : `Custom split across ${includedMembers.length} ${
-                    includedMembers.length === 1 ? 'person' : 'people'
-                  }`}
+              {formatMoney(perPersonCents)} each · {includedMembers.length}{' '}
+              {includedMembers.length === 1 ? 'person' : 'people'}
             </Text>
           ) : (
             <Text style={styles.perPerson}>Tap in the amount</Text>
@@ -492,7 +666,9 @@ function NewExpenseScreen() {
 
           <AmountKeypad onKey={handleKey} disabled={saving} />
 
-          {/* ---------------------------------------------------- what for -- */}
+          {/* ============================================== 4. DETAILS == */}
+          <View style={styles.divider} />
+
           <Field
             value={description}
             onChangeText={setDescription}
@@ -500,7 +676,6 @@ function NewExpenseScreen() {
             maxLength={140}
             autoCapitalize="sentences"
             icon="pricetag-outline"
-            style={styles.descriptionField}
           />
 
           <CategoryPicker
@@ -511,19 +686,41 @@ function NewExpenseScreen() {
             }}
           />
 
-          {/* ----------------------------------------------------- receipt -- */}
+          <Tappable
+            onPress={() => setRepeatMonthly((on) => !on)}
+            style={[styles.optionRow, repeatMonthly && styles.optionRowOn]}
+            scaleTo={0.99}
+          >
+            <Ionicons
+              name={repeatMonthly ? 'checkmark-circle' : 'ellipse-outline'}
+              size={22}
+              color={repeatMonthly ? colors.primary : colors.textFaint}
+            />
+            <View style={styles.optionBody}>
+              <Text style={[styles.optionTitle, repeatMonthly && styles.optionTitleOn]}>
+                Repeats monthly
+              </Text>
+              <Text style={styles.hint}>
+                {repeatMonthly
+                  ? 'Posts itself every month with the same split.'
+                  : 'For rent, utilities — anything that comes back.'}
+              </Text>
+            </View>
+            <Ionicons name="repeat" size={18} color={repeatMonthly ? colors.primary : colors.textFaint} />
+          </Tappable>
+
           {receiptUri ? (
             <Card style={styles.receiptCard}>
               <Image source={{ uri: receiptUri }} style={styles.receiptImage} />
               <View style={styles.receiptBody}>
-                <Text style={styles.receiptTitle}>Receipt attached</Text>
+                <Text style={styles.optionTitle}>Receipt attached</Text>
                 {scanning ? (
                   <View style={styles.scanning}>
                     <ActivityIndicator size="small" color={colors.primary} />
-                    <Text style={styles.receiptNote}>Reading receipt…</Text>
+                    <Text style={styles.hint}>Reading receipt…</Text>
                   </View>
                 ) : scanNote ? (
-                  <Text style={styles.receiptNote}>{scanNote}</Text>
+                  <Text style={styles.hint}>{scanNote}</Text>
                 ) : null}
                 <Pressable onPress={() => setReceiptUri(null)} hitSlop={6}>
                   <Text style={styles.removeLink}>Remove</Text>
@@ -538,240 +735,10 @@ function NewExpenseScreen() {
               </Text>
             </Tappable>
           )}
-
-          {/* --------------------------------------- payer + split summary -- */}
-          <Tappable onPress={() => setSplitOpen((open) => !open)} style={styles.summary} scaleTo={0.99}>
-            <Avatar name={payer?.name ?? 'You'} id={paidBy ?? undefined} size={34} />
-            <View style={styles.summaryBody}>
-              <Text style={styles.summaryTitle}>
-                {multiPayer
-                  ? `${Math.max(payerList.length, 2)} people paid`
-                  : paidBy === userId
-                    ? 'You paid'
-                    : `${payer?.name ?? 'Someone'} paid`}
-              </Text>
-              <Text style={styles.summaryMeta}>
-                {mode === 'even' ? 'Split evenly' : 'Custom split'} · {includedMembers.length}{' '}
-                {includedMembers.length === 1 ? 'person' : 'people'}
-              </Text>
-            </View>
-            <AvatarStack people={includedMembers.map((m) => ({ id: m.id, name: m.name }))} />
-            <Ionicons
-              name={splitOpen ? 'chevron-up' : 'chevron-down'}
-              size={18}
-              color={colors.textFaint}
-            />
-          </Tappable>
-
-          {splitOpen ? (
-            <View style={styles.details}>
-              <View style={styles.splitHeader}>
-                <Text style={styles.detailLabel}>Paid by</Text>
-                <Segmented
-                  options={[
-                    { label: 'One person', value: 'one' },
-                    { label: 'Several', value: 'several' },
-                  ]}
-                  value={multiPayer ? 'several' : 'one'}
-                  onChange={(next) => toggleMultiPayer(next === 'several')}
-                  style={styles.payerToggle}
-                />
-              </View>
-
-              {multiPayer ? (
-                <>
-                  <Card padded={false} style={styles.splitCard}>
-                    {members.map((member, index) => {
-                      const cents = Math.round(payerCents[member.id] ?? 0);
-                      const active = editing.kind === 'payer' && editing.userId === member.id;
-
-                      return (
-                        <View
-                          key={member.id}
-                          style={[styles.splitRow, index > 0 && styles.splitRowBordered]}
-                        >
-                          <View style={styles.splitToggle}>
-                            <Avatar name={member.name} id={member.id} size={30} />
-                            <Text style={styles.splitName} numberOfLines={1}>
-                              {member.id === userId ? 'You' : member.name}
-                            </Text>
-                          </View>
-
-                          <Pressable
-                            onPress={() => selectForEditing({ kind: 'payer', userId: member.id })}
-                            style={[styles.shareBox, active && styles.shareBoxActive]}
-                            accessibilityLabel={`Set what ${member.name} paid`}
-                          >
-                            <Text
-                              style={[styles.shareBoxText, cents === 0 && styles.shareBoxTextEmpty]}
-                            >
-                              {formatMoney(cents)}
-                            </Text>
-                          </Pressable>
-                        </View>
-                      );
-                    })}
-                  </Card>
-
-                  <View style={styles.payerHintRow}>
-                    <Text
-                      style={[
-                        styles.payerHint,
-                        payerRemaining === 0 && payerList.length > 1
-                          ? styles.remainderOk
-                          : styles.remainderOff,
-                      ]}
-                    >
-                      {payerRemaining === 0 && payerList.length > 1
-                        ? 'Contributions add up exactly'
-                        : payerRemaining > 0
-                          ? `${formatMoney(payerRemaining)} of the bill unaccounted for`
-                          : `${formatMoney(-payerRemaining)} more than the total`}
-                    </Text>
-                    {payerRemaining !== 0 && editing.kind === 'payer' ? (
-                      <Button
-                        title="Give rest"
-                        variant="subtle"
-                        size="sm"
-                        onPress={() => givePayerRestTo((editing as { userId: string }).userId)}
-                      />
-                    ) : null}
-                  </View>
-                </>
-              ) : (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.payerRow}>
-                  {members.map((member) => {
-                    const selected = member.id === paidBy;
-                    return (
-                      <Pressable
-                        key={member.id}
-                        onPress={() => setPaidBy(member.id)}
-                        style={[styles.payer, selected && styles.payerSelected]}
-                      >
-                        <Avatar name={member.name} id={member.id} size={38} />
-                        <Text style={[styles.payerName, selected && styles.payerNameSelected]} numberOfLines={1}>
-                          {member.id === userId ? 'You' : member.name.split(' ')[0]}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-              )}
-
-            <View style={styles.splitHeader}>
-              <Text style={styles.detailLabel}>Split between</Text>
-              <Segmented
-                options={[
-                  { label: 'Even', value: 'even' },
-                  { label: 'Custom', value: 'custom' },
-                ]}
-                value={mode}
-                onChange={switchMode}
-                style={styles.modeToggle}
-              />
-            </View>
-
-            <Card padded={false} style={styles.splitCard}>
-              {members.map((member, index) => {
-                const included =
-                  effectiveParticipants.find((p) => p.userId === member.id)?.included ?? false;
-                const line = split.lines.find((l) => l.userId === member.id);
-
-                return (
-                  <View key={member.id} style={[styles.splitRow, index > 0 && styles.splitRowBordered]}>
-                    <Pressable
-                      onPress={() => toggleMember(member.id)}
-                      style={styles.splitToggle}
-                      accessibilityRole="checkbox"
-                      accessibilityState={{ checked: included }}
-                    >
-                      <Ionicons
-                        name={included ? 'checkmark-circle' : 'ellipse-outline'}
-                        size={23}
-                        color={included ? colors.primary : colors.textFaint}
-                      />
-                      <Avatar name={member.name} id={member.id} size={30} />
-                      <Text style={[styles.splitName, !included && styles.splitNameOff]} numberOfLines={1}>
-                        {member.id === userId ? 'You' : member.name}
-                      </Text>
-                    </Pressable>
-
-                    {included && mode === 'custom' ? (
-                      <Pressable
-                        onPress={() => selectForEditing({ kind: 'member', userId: member.id })}
-                        style={[
-                          styles.shareBox,
-                          editing.kind === 'member' &&
-                            editing.userId === member.id &&
-                            styles.shareBoxActive,
-                        ]}
-                        accessibilityLabel={`Edit ${member.name}'s share`}
-                      >
-                        <Text style={styles.shareBoxText}>
-                          {formatMoney(Math.round(
-                            effectiveParticipants.find((p) => p.userId === member.id)?.customCents ?? 0
-                          ))}
-                        </Text>
-                      </Pressable>
-                    ) : (
-                      <Text style={[styles.splitAmount, !included && styles.splitNameOff]}>
-                        {included ? formatMoney(line?.shareCents ?? 0) : '—'}
-                      </Text>
-                    )}
-                  </View>
-                );
-              })}
-            </Card>
-
-          </View>
-        ) : null}
         </ScrollView>
 
-        {/* Always reachable, never scrolled away from — and the reason Save
-            is unavailable lives here too. Previously it sat in the scroll
-            content and could hide behind this bar, which left the button
-            simply dead with no explanation. */}
         <View style={styles.footer}>
-          {mode === 'custom' && amountCents > 0 ? (
-            <View style={styles.remainderBar}>
-              <Ionicons
-                name={remaining === 0 ? 'checkmark-circle' : 'alert-circle'}
-                size={16}
-                color={remaining === 0 ? colors.positive : colors.warning}
-              />
-              <Text
-                style={[
-                  styles.remainderText,
-                  remaining === 0 ? styles.remainderOk : styles.remainderOff,
-                ]}
-              >
-                {remaining === 0
-                  ? 'Shares add up exactly'
-                  : remaining > 0
-                    ? `${formatMoney(remaining)} still to assign`
-                    : `${formatMoney(-remaining)} over the total`}
-              </Text>
-
-              {remaining !== 0 ? (
-                <View style={styles.remainderActions}>
-                  {editing.kind === 'member' ? (
-                    <Button
-                      title={`Give rest to ${
-                        editingMember?.id === userId ? 'you' : (editingMember?.name.split(' ')[0] ?? 'them')
-                      }`}
-                      variant="subtle"
-                      size="sm"
-                      onPress={() => giveRestTo((editing as { userId: string }).userId)}
-                    />
-                  ) : null}
-                  <Button title="Even out" variant="subtle" size="sm" onPress={evenOut} />
-                </View>
-              ) : null}
-            </View>
-          ) : null}
-
-          {blockedReason ? <Text style={styles.blockedReason}>{blockedReason}</Text> : null}
-
+          {blockedReason ? <Text style={styles.blocked}>{blockedReason}</Text> : null}
           <Button
             title={canSave && amountCents > 0 ? `Save ${formatMoney(amountCents)}` : 'Save expense'}
             onPress={submit}
@@ -794,35 +761,110 @@ function centsToRaw(cents: number): string {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
-  content: { padding: spacing.lg, paddingBottom: 110, gap: spacing.md },
+  content: { padding: spacing.lg, paddingBottom: 120, gap: spacing.sm },
 
+  sectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    minHeight: 34,
+  },
+  sectionTitle: { ...typography.label },
+  headToggle: { width: 184 },
+
+  rowCard: { overflow: 'hidden' },
+  personRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    minHeight: 52,
+  },
+  rowBordered: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  personToggle: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 },
+  personName: { ...typography.body, flex: 1 },
+  personNameOff: { color: colors.textFaint },
+  shareText: { ...typography.money, fontSize: 15 },
+
+  amountBox: {
+    minWidth: 92,
+    paddingVertical: 7,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'flex-end',
+  },
+  amountBoxActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  amountBoxText: { ...typography.money, fontSize: 15 },
+  amountBoxEmpty: { color: colors.textFaint },
+
+  payerRow: { gap: spacing.sm, paddingVertical: spacing.xs, paddingRight: spacing.lg },
+  payerPick: {
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    width: 74,
+  },
+  payerPickOn: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  payerName: { ...typography.caption, color: colors.textMuted },
+  payerNameOn: { color: colors.primary, fontWeight: '800' },
+
+  hintRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' },
+  hint: { ...typography.caption, flexShrink: 1, lineHeight: 16 },
+  hintOk: { color: colors.positive, fontWeight: '700' },
+  hintWarn: { color: colors.warning, fontWeight: '700' },
+
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginVertical: spacing.md,
+  },
+
+  amountLabel: { ...typography.label, textAlign: 'center' },
+  amountLabelAlt: { color: colors.primary },
   amountBlock: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'center',
     gap: 4,
-    marginTop: spacing.sm,
+    marginTop: -spacing.xs,
   },
-  amountLabel: {
-    ...typography.label,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-    marginBottom: -spacing.xs,
-  },
-  amountLabelShare: { color: colors.primary },
-  currency: { ...typography.title, fontSize: 26, color: colors.textMuted, marginTop: 10 },
-  currencyShare: { color: colors.primary },
-  amount: { ...typography.hero, fontSize: 56, lineHeight: 64 },
-  amountShare: { color: colors.primary },
-  perPerson: { ...typography.caption, textAlign: 'center', marginTop: -spacing.sm },
+  currency: { ...typography.title, fontSize: 24, color: colors.textMuted, marginTop: 9 },
+  currencyAlt: { color: colors.primary },
+  amount: { ...typography.hero, fontSize: 50, lineHeight: 58 },
+  amountAlt: { color: colors.primary },
+  perPerson: { ...typography.caption, textAlign: 'center' },
+  backToTotal: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs },
+  backToTotalText: { ...typography.caption, color: colors.primary, fontWeight: '700' },
 
-  descriptionField: { marginTop: spacing.xs },
+  optionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  optionRowOn: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  optionBody: { flex: 1, gap: 2 },
+  optionTitle: { ...typography.bodyStrong, fontSize: 14.5 },
+  optionTitleOn: { color: colors.primary },
 
   receiptCard: { flexDirection: 'row', gap: spacing.md, padding: spacing.md },
   receiptImage: { width: 52, height: 66, borderRadius: radius.sm, backgroundColor: colors.surfaceAlt },
   receiptBody: { flex: 1, gap: spacing.xs, justifyContent: 'center' },
-  receiptTitle: { ...typography.bodyStrong },
-  receiptNote: { ...typography.caption, lineHeight: 16 },
   scanning: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   removeLink: { ...typography.caption, color: colors.negative, fontWeight: '700' },
   receiptEmpty: {
@@ -838,101 +880,6 @@ const styles = StyleSheet.create({
   },
   receiptCta: { ...typography.bodyStrong, color: colors.primary },
 
-  summary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    padding: spacing.md,
-  },
-  summaryBody: { flex: 1, gap: 1 },
-  summaryTitle: { ...typography.bodyStrong },
-  summaryMeta: { ...typography.caption },
-
-  details: { gap: spacing.sm },
-  detailLabel: { ...typography.label },
-  payerRow: { gap: spacing.sm, paddingVertical: spacing.xs, paddingRight: spacing.lg },
-  payer: {
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 2,
-    borderColor: 'transparent',
-    width: 74,
-  },
-  payerSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
-  payerName: { ...typography.caption, color: colors.textMuted },
-  payerNameSelected: { color: colors.primary, fontWeight: '800' },
-
-  splitHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  modeToggle: { width: 150 },
-  splitCard: { overflow: 'hidden' },
-  splitRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    minHeight: 56,
-    gap: spacing.sm,
-  },
-  splitRowBordered: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  splitToggle: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 },
-  splitName: { ...typography.body, flexShrink: 1 },
-  splitNameOff: { color: colors.textFaint },
-  splitAmount: { ...typography.money },
-  shareBox: {
-    minWidth: 92,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.sm,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceAlt,
-    alignItems: 'flex-end',
-  },
-  shareBoxActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
-  shareBoxText: { ...typography.money, fontSize: 15 },
-  shareBoxTextEmpty: { color: colors.textFaint },
-  payerToggle: { width: 190 },
-  payerHintRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  payerHint: { ...typography.caption, fontWeight: '700', flex: 1 },
-
-  remainderBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    flexWrap: 'wrap',
-    marginBottom: spacing.sm,
-  },
-  remainderText: { ...typography.caption, fontWeight: '700', flexShrink: 1 },
-  remainderOk: { color: colors.positive },
-  remainderOff: { color: colors.warning },
-  remainderActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginLeft: 'auto' },
-  blockedReason: {
-    ...typography.caption,
-    color: colors.negative,
-    marginBottom: spacing.sm,
-    textAlign: 'center',
-  },
-
-  editingBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    marginTop: -spacing.sm,
-  },
-  editingBannerText: { ...typography.caption, color: colors.primary, fontWeight: '700' },
-
-  warning: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  warningText: { ...typography.caption, color: colors.negative, flex: 1 },
-
   footer: {
     position: 'absolute',
     left: 0,
@@ -944,5 +891,11 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
     ...shadowLifted,
+  },
+  blocked: {
+    ...typography.caption,
+    color: colors.negative,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
   },
 });

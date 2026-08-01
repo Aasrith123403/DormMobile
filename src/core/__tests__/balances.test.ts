@@ -380,3 +380,77 @@ describe('payersOf', () => {
     expect(payersOf({ paidBy: 'ana', amountCents: 500, splits: [], payers })).toEqual(payers);
   });
 });
+
+describe('paying separately', () => {
+  /**
+   * Everyone covering their own share: each person's split equals what they
+   * put in. The expense must net to exactly zero for everyone, which is what
+   * lets the UI promise "nobody owes anybody".
+   */
+  const separately = (contributions: [string, number][]) => ({
+    paidBy: contributions[0][0],
+    amountCents: contributions.reduce((sum, [, cents]) => sum + cents, 0),
+    payers: contributions.map(([userId, paidCents]) => ({ userId, paidCents })),
+    splits: contributions.map(([userId, shareCents]) => ({ userId, shareCents })),
+  });
+
+  it('leaves nobody owing anybody', () => {
+    // Aasrith paid 50, Jay paid 60.
+    const balances = computeBalances({
+      memberIds: ['aasrith', 'jay'],
+      expenses: [separately([['aasrith', 5000], ['jay', 6000]])],
+      settlements: [],
+    });
+
+    expect(netOf(balances, 'aasrith')).toBe(0);
+    expect(netOf(balances, 'jay')).toBe(0);
+    expect(minimizeTransfers(balances)).toEqual([]);
+  });
+
+  it('still records what each person spent', () => {
+    const balances = computeBalances({
+      memberIds: ['aasrith', 'jay'],
+      expenses: [separately([['aasrith', 5000], ['jay', 6000]])],
+      settlements: [],
+    });
+
+    const jay = balances.find((b) => b.userId === 'jay')!;
+    expect(jay.paidCents).toBe(6000);
+    expect(jay.owedCents).toBe(6000);
+  });
+
+  it('nets to zero for any number of contributors and amounts', () => {
+    const cases: [string, number][][] = [
+      [['a', 1]],
+      [['a', 999], ['b', 1]],
+      [['a', 3333], ['b', 3333], ['c', 3334]],
+      [['a', 12_345], ['b', 1], ['c', 99_999], ['d', 7]],
+    ];
+
+    for (const contributions of cases) {
+      const balances = computeBalances({
+        memberIds: contributions.map(([id]) => id),
+        expenses: [separately(contributions)],
+        settlements: [],
+      });
+
+      for (const balance of balances) expect(balance.netCents).toBe(0);
+    }
+  });
+
+  it('does not disturb unrelated balances in the same group', () => {
+    const balances = computeBalances({
+      memberIds: ['aasrith', 'jay'],
+      expenses: [
+        // An ordinary split expense that does create a debt...
+        { paidBy: 'aasrith', amountCents: 2000, splits: evenSplit(2000, ['aasrith', 'jay']) },
+        // ...plus a separately-paid one, which should change nothing.
+        separately([['aasrith', 5000], ['jay', 6000]]),
+      ],
+      settlements: [],
+    });
+
+    expect(netOf(balances, 'aasrith')).toBe(1000);
+    expect(netOf(balances, 'jay')).toBe(-1000);
+  });
+});

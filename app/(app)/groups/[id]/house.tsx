@@ -5,7 +5,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { GroupHeader } from '../../../../src/components/GroupHeader';
 import { confirm, notify } from '../../../../src/components/dialog';
-import { successFeedback } from '../../../../src/components/haptics';
+import { successFeedback, warningFeedback } from '../../../../src/components/haptics';
+import { FadeIn } from '../../../../src/components/motion';
 import {
   Avatar,
   Badge,
@@ -18,42 +19,49 @@ import {
   Tappable,
 } from '../../../../src/components/ui';
 import { formatMoney, parseAmountInput } from '../../../../src/core/money';
-import { nextTurn } from '../../../../src/core/rotation';
+import { ChoreFrequency, describeDue, isOverdue } from '../../../../src/core/rotation';
+import { todayIso } from '../../../../src/core/subscriptions';
 import { useAuth } from '../../../../src/data/auth';
-import { useGroup } from '../../../../src/data/groupContext';
+import { GroupChore, useGroup } from '../../../../src/data/groupContext';
 import {
+  addChore,
   addSupplyItem,
+  buySupplyItem,
+  completeChore,
+  deleteChore,
   deleteSupplyItem,
-  logSupplyPurchase,
+  markSupplyNeeded,
   setGroupStatus,
 } from '../../../../src/data/mutations';
 import type { SupplyItemRow } from '../../../../src/lib/database.types';
 import { friendlyError } from '../../../../src/lib/supabase';
 import { colors, radius, spacing, typography } from '../../../../src/theme';
 
-const SUGGESTIONS = ['Toilet paper', 'Trash bags', 'Paper towels', 'Dish soap', 'Sponges'];
+const SUPPLY_SUGGESTIONS = ['Toilet paper', 'Trash bags', 'Paper towels', 'Dish soap', 'Sponges'];
+const CHORE_SUGGESTIONS = ['Trash', 'Bathroom', 'Dishes', 'Vacuum', 'Kitchen'];
 
-/** Deliberately small and fixed — a status picker, not a chat. */
+/** Fixed and small — a status picker, not a chat. */
 const STATUSES = [
-  { emoji: '📚', label: 'Studying' },
   { emoji: '😴', label: 'Asleep' },
+  { emoji: '📚', label: 'Studying — quiet' },
   { emoji: '👋', label: 'Friends over' },
   { emoji: '🏃', label: 'Out' },
-  { emoji: '🎧', label: 'Do not disturb' },
-  { emoji: '🍜', label: 'Around' },
+  { emoji: '🟢', label: 'Free' },
 ];
 
-type HouseTab = 'supplies' | 'status';
+/** How long a status stays true before it stops being shown. */
+const CLEAR_HOURS = 8;
 
-/**
- * The two "living together" features share one tab: both are about the house
- * rather than the ledger, and neither is big enough to earn its own slot in
- * the tab bar.
- */
+type HouseTab = 'supplies' | 'chores' | 'status';
+
 export default function HouseScreen() {
   const [tab, setTab] = useState<HouseTab>('supplies');
-  const { supplyItems, statuses, error, refresh } = useGroup();
+  const { supplyItems, chores, statuses, error, refresh } = useGroup();
   const [refreshing, setRefreshing] = useState(false);
+
+  const neededCount = supplyItems.filter((item) => item.is_needed).length;
+  const today = todayIso();
+  const overdueCount = chores.filter((c) => isOverdue(c.next_due, today)).length;
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -65,11 +73,11 @@ export default function HouseScreen() {
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <GroupHeader
         subtitle={
-          tab === 'supplies'
-            ? supplyItems.length > 0
-              ? `${supplyItems.length} ${supplyItems.length === 1 ? 'staple' : 'staples'} in rotation`
-              : 'Track whose turn it is to buy'
-            : `${statuses.length} ${statuses.length === 1 ? 'status' : 'statuses'} set`
+          neededCount > 0
+            ? `${neededCount} ${neededCount === 1 ? 'staple' : 'staples'} needed`
+            : overdueCount > 0
+              ? `${overdueCount} ${overdueCount === 1 ? 'chore' : 'chores'} overdue`
+              : `${statuses.length} ${statuses.length === 1 ? 'status' : 'statuses'} set`
         }
       />
 
@@ -77,6 +85,7 @@ export default function HouseScreen() {
         <Segmented
           options={[
             { label: 'Supplies', value: 'supplies' },
+            { label: 'Chores', value: 'chores' },
             { label: 'Status', value: 'status' },
           ]}
           value={tab}
@@ -91,7 +100,7 @@ export default function HouseScreen() {
         showsVerticalScrollIndicator={false}
       >
         {error ? <ErrorBanner message={error} onRetry={refresh} /> : null}
-        {tab === 'supplies' ? <SuppliesPanel /> : <StatusPanel />}
+        {tab === 'supplies' ? <SuppliesPanel /> : tab === 'chores' ? <ChoresPanel /> : <StatusPanel />}
       </ScrollView>
     </SafeAreaView>
   );
@@ -100,20 +109,17 @@ export default function HouseScreen() {
 /* ------------------------------------------------------------- supplies -- */
 
 function SuppliesPanel() {
-  const { userId } = useAuth();
-  const { groupId, supplyItems, members, memberById, refresh, displayName } = useGroup();
+  const { groupId, supplyItems, supplyTurns, refresh } = useGroup();
   const [newItem, setNewItem] = useState('');
   const [adding, setAdding] = useState(false);
 
-  const addItem = async (name: string) => {
+  const add = async (name: string) => {
     const trimmed = name.trim();
     if (!trimmed || adding) return;
 
     setAdding(true);
     try {
-      // Whoever adds it takes the first turn — they usually just noticed it
-      // ran out.
-      await addSupplyItem({ groupId, name: trimmed, firstTurnUserId: userId });
+      await addSupplyItem({ groupId, name: trimmed });
       setNewItem('');
       await refresh();
     } catch (caught) {
@@ -123,39 +129,27 @@ function SuppliesPanel() {
     }
   };
 
+  // Needed things first — that is the whole point of the flag.
+  const sorted = [...supplyItems].sort((a, b) => Number(b.is_needed) - Number(a.is_needed));
+
   return (
     <>
       {supplyItems.length === 0 ? (
         <EmptyState
           icon="cart-outline"
-          title="Nothing in rotation"
-          message="Add a shared staple and RoomLedger tracks whose turn it is to buy it."
+          title="Nothing tracked yet"
+          message="Add a staple. When it runs out, one tap tells the house and names whose turn it is to buy."
         />
       ) : null}
 
-      {supplyItems.map((item) => (
-        <SupplyCard
-          key={item.id}
-          item={item}
-          isMyTurn={item.current_turn_user_id === userId}
-          turnName={displayName(item.current_turn_user_id)}
-          turnRealName={
-            item.current_turn_user_id
-              ? (memberById.get(item.current_turn_user_id)?.name ?? 'Former member')
-              : '?'
-          }
-          nextUpName={displayName(
-            nextTurn(
-              members.map((m) => m.id),
-              item.current_turn_user_id
-            )
-          )}
-          onRefresh={refresh}
-        />
+      {sorted.map((item, index) => (
+        <FadeIn key={item.id} index={index} distance={6}>
+          <SupplyCard item={item} turnUserId={supplyTurns.get(item.id) ?? null} onRefresh={refresh} />
+        </FadeIn>
       ))}
 
       <Card style={styles.addCard}>
-        <Text style={styles.cardTitle}>Add a staple</Text>
+        <Text style={styles.cardTitle}>Track a staple</Text>
         <Field
           value={newItem}
           onChangeText={setNewItem}
@@ -163,10 +157,10 @@ function SuppliesPanel() {
           maxLength={60}
           returnKeyType="done"
           icon="basket-outline"
-          onSubmitEditing={() => void addItem(newItem)}
+          onSubmitEditing={() => void add(newItem)}
         />
         <View style={styles.chipRow}>
-          {SUGGESTIONS.map((suggestion) => (
+          {SUPPLY_SUGGESTIONS.map((suggestion) => (
             <Pressable
               key={suggestion}
               onPress={() => setNewItem(suggestion)}
@@ -177,11 +171,11 @@ function SuppliesPanel() {
           ))}
         </View>
         <Button
-          title="Add to rotation"
+          title="Add"
           variant="secondary"
           loading={adding}
           disabled={!newItem.trim()}
-          onPress={() => void addItem(newItem)}
+          onPress={() => void add(newItem)}
         />
       </Card>
     </>
@@ -190,35 +184,47 @@ function SuppliesPanel() {
 
 function SupplyCard({
   item,
-  isMyTurn,
-  turnName,
-  turnRealName,
-  nextUpName,
+  turnUserId,
   onRefresh,
 }: {
   item: SupplyItemRow;
-  isMyTurn: boolean;
-  turnName: string;
-  turnRealName: string;
-  nextUpName: string;
+  turnUserId: string | null;
   onRefresh: () => Promise<void>;
 }) {
+  const { userId } = useAuth();
+  const { memberById, displayName } = useGroup();
   const [amountText, setAmountText] = useState('');
-  const [expanded, setExpanded] = useState(false);
+  const [buying, setBuying] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const amountCents = parseAmountInput(amountText) ?? 0;
+  const isMyTurn = turnUserId === userId;
+  const turnName = turnUserId ? displayName(turnUserId) : 'Nobody yet';
+
+  const flag = async (needed: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await markSupplyNeeded(item.id, needed);
+      if (needed) warningFeedback();
+      await onRefresh();
+    } catch (caught) {
+      await notify({ title: 'Could not update', message: friendlyError(caught) });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const buy = async () => {
     if (amountCents <= 0 || busy) return;
-
     setBusy(true);
     try {
-      // Server-side: logs the expense, splits it, and advances the turn.
-      await logSupplyPurchase({ itemId: item.id, amountCents, description: item.name });
+      // One server-side action: logs the expense, clears the flag, advances
+      // the rotation.
+      await buySupplyItem({ itemId: item.id, amountCents, description: item.name });
       successFeedback();
       setAmountText('');
-      setExpanded(false);
+      setBuying(false);
       await onRefresh();
     } catch (caught) {
       await notify({ title: 'Could not log it', message: friendlyError(caught) });
@@ -229,12 +235,11 @@ function SupplyCard({
 
   const confirmDelete = async () => {
     const confirmed = await confirm({
-      title: 'Remove from rotation?',
-      message: `“${item.name}” will no longer be tracked.`,
+      title: 'Stop tracking?',
+      message: `“${item.name}” will no longer appear here.`,
       confirmLabel: 'Remove',
       destructive: true,
     });
-
     if (!confirmed) return;
 
     try {
@@ -246,27 +251,29 @@ function SupplyCard({
   };
 
   return (
-    <Card style={styles.card}>
+    <Card style={[styles.card, item.is_needed && styles.cardNeeded]}>
       <View style={styles.cardTop}>
-        <Avatar name={turnRealName} id={item.current_turn_user_id ?? item.id} size={38} />
+        <Avatar name={memberById.get(turnUserId ?? '')?.name ?? '?'} id={turnUserId ?? item.id} size={36} />
 
         <View style={styles.cardBody}>
           <Text style={styles.itemTitle} numberOfLines={1}>
             {item.name}
           </Text>
           <Text style={styles.cardMeta}>
-            {isMyTurn ? 'Your turn to buy' : `${turnName}'s turn`} · then {nextUpName}
+            {item.is_needed ? 'Out — ' : ''}
+            {isMyTurn ? 'your turn to buy' : `${turnName}'s turn`}
+            {item.last_bought_by ? ` · last: ${displayName(item.last_bought_by)}` : ''}
           </Text>
         </View>
 
-        {isMyTurn ? <Badge label="Your turn" tone="warning" /> : null}
+        {item.is_needed ? <Badge label="Needed" tone="warning" /> : null}
 
         <Pressable onPress={() => void confirmDelete()} hitSlop={8}>
           <Ionicons name="close" size={18} color={colors.textFaint} />
         </Pressable>
       </View>
 
-      {expanded ? (
+      {buying ? (
         <>
           <View style={styles.buyRow}>
             <Field
@@ -287,17 +294,215 @@ function SupplyCard({
             />
           </View>
           <Text style={styles.buyHint}>
-            Logs a household expense split evenly, then passes the turn on.
+            Splits evenly, clears the flag, and passes the turn on.
           </Text>
         </>
       ) : (
-        <Button
-          title="I bought this"
-          variant={isMyTurn ? 'primary' : 'secondary'}
-          icon="cart-outline"
-          onPress={() => setExpanded(true)}
-        />
+        <View style={styles.actionRow}>
+          {item.is_needed ? (
+            <Button
+              title="Not out after all"
+              variant="ghost"
+              size="sm"
+              onPress={() => void flag(false)}
+              style={styles.action}
+            />
+          ) : (
+            <Button
+              title="We're out"
+              variant="subtle"
+              size="sm"
+              icon="alert-circle-outline"
+              onPress={() => void flag(true)}
+              style={styles.action}
+            />
+          )}
+          <Button
+            title="Bought it"
+            variant={item.is_needed || isMyTurn ? 'primary' : 'secondary'}
+            size="sm"
+            icon="cart-outline"
+            onPress={() => setBuying(true)}
+            style={styles.action}
+          />
+        </View>
       )}
+    </Card>
+  );
+}
+
+/* --------------------------------------------------------------- chores -- */
+
+function ChoresPanel() {
+  const { groupId, chores, choreTurns, refresh } = useGroup();
+  const [newChore, setNewChore] = useState('');
+  const [frequency, setFrequency] = useState<ChoreFrequency>('weekly');
+  const [adding, setAdding] = useState(false);
+
+  const add = async () => {
+    const trimmed = newChore.trim();
+    if (!trimmed || adding) return;
+
+    setAdding(true);
+    try {
+      await addChore({ groupId, name: trimmed, frequency });
+      setNewChore('');
+      await refresh();
+    } catch (caught) {
+      await notify({ title: 'Could not add', message: friendlyError(caught) });
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <>
+      {chores.length === 0 ? (
+        <EmptyState
+          icon="checkbox-outline"
+          title="No chores yet"
+          message="Add one and the app answers whose turn it is — nobody maintains a schedule."
+        />
+      ) : null}
+
+      {chores.map((chore, index) => (
+        <FadeIn key={chore.id} index={index} distance={6}>
+          <ChoreCard chore={chore} turnUserId={choreTurns.get(chore.id) ?? null} onRefresh={refresh} />
+        </FadeIn>
+      ))}
+
+      <Card style={styles.addCard}>
+        <Text style={styles.cardTitle}>Add a chore</Text>
+        <Field
+          value={newChore}
+          onChangeText={setNewChore}
+          placeholder="Trash"
+          maxLength={60}
+          returnKeyType="done"
+          icon="checkbox-outline"
+          onSubmitEditing={() => void add()}
+        />
+        <View style={styles.chipRow}>
+          {CHORE_SUGGESTIONS.map((suggestion) => (
+            <Pressable
+              key={suggestion}
+              onPress={() => setNewChore(suggestion)}
+              style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
+            >
+              <Text style={styles.chipText}>{suggestion}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Segmented
+          options={[
+            { label: 'Daily', value: 'daily' },
+            { label: 'Weekly', value: 'weekly' },
+            { label: 'Biweekly', value: 'biweekly' },
+            { label: 'Monthly', value: 'monthly' },
+          ]}
+          value={frequency}
+          onChange={setFrequency}
+        />
+        <Button
+          title="Add"
+          variant="secondary"
+          loading={adding}
+          disabled={!newChore.trim()}
+          onPress={() => void add()}
+        />
+      </Card>
+    </>
+  );
+}
+
+function ChoreCard({
+  chore,
+  turnUserId,
+  onRefresh,
+}: {
+  chore: GroupChore;
+  turnUserId: string | null;
+  onRefresh: () => Promise<void>;
+}) {
+  const { userId } = useAuth();
+  const { memberById, displayName } = useGroup();
+  const [busy, setBusy] = useState(false);
+
+  const today = todayIso();
+  const overdue = isOverdue(chore.next_due, today);
+  const isMyTurn = turnUserId === userId;
+  const lastDone = chore.completions[0];
+
+  const done = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await completeChore(chore.id);
+      successFeedback();
+      await onRefresh();
+    } catch (caught) {
+      await notify({ title: 'Could not update', message: friendlyError(caught) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    const confirmed = await confirm({
+      title: 'Delete chore?',
+      message: `“${chore.name}” and its history will be removed.`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!confirmed) return;
+
+    try {
+      await deleteChore(chore.id);
+      await onRefresh();
+    } catch (caught) {
+      await notify({ title: 'Could not delete', message: friendlyError(caught) });
+    }
+  };
+
+  return (
+    <Card style={[styles.card, overdue && styles.cardNeeded]}>
+      <View style={styles.cardTop}>
+        <Avatar name={memberById.get(turnUserId ?? '')?.name ?? '?'} id={turnUserId ?? chore.id} size={36} />
+
+        <View style={styles.cardBody}>
+          <Text style={styles.itemTitle} numberOfLines={1}>
+            {chore.name}
+          </Text>
+          <Text style={styles.cardMeta}>
+            {isMyTurn ? 'Your turn' : `${turnUserId ? displayName(turnUserId) : 'Nobody'}'s turn`} ·{' '}
+            {describeDue(chore.next_due, today)}
+          </Text>
+        </View>
+
+        {overdue ? <Badge label="Overdue" tone="negative" /> : null}
+
+        <Pressable onPress={() => void confirmDelete()} hitSlop={8}>
+          <Ionicons name="close" size={18} color={colors.textFaint} />
+        </Pressable>
+      </View>
+
+      {lastDone ? (
+        <Text style={styles.choreHistory}>
+          Last done by {displayName(lastDone.user_id)} ·{' '}
+          {new Date(lastDone.completed_at).toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+          })}
+        </Text>
+      ) : null}
+
+      <Button
+        title="Mark done"
+        variant={isMyTurn || overdue ? 'primary' : 'secondary'}
+        icon="checkmark"
+        loading={busy}
+        onPress={done}
+      />
     </Card>
   );
 }
@@ -309,15 +514,20 @@ function StatusPanel() {
   const { groupId, members, statuses, refresh } = useGroup();
   const [busy, setBusy] = useState(false);
 
-  const myStatus = statuses.find((s) => s.user_id === userId)?.status ?? null;
+  const mine = statuses.find((s) => s.user_id === userId);
 
   const pick = async (label: string) => {
     if (!userId || busy) return;
 
     setBusy(true);
     try {
-      // Tapping the current status again resets it to "Around".
-      await setGroupStatus({ groupId, userId, status: label === myStatus ? 'Around' : label });
+      // Tapping the current status again clears it outright.
+      await setGroupStatus({
+        groupId,
+        userId,
+        status: label === mine?.status ? 'Free' : label,
+        clearsInHours: CLEAR_HOURS,
+      });
       await refresh();
     } catch (caught) {
       await notify({ title: 'Could not update', message: friendlyError(caught) });
@@ -332,7 +542,7 @@ function StatusPanel() {
         <Text style={styles.cardTitle}>Set your status</Text>
         <View style={styles.chipGrid}>
           {STATUSES.map((status) => {
-            const active = myStatus === status.label;
+            const active = mine?.status === status.label;
             return (
               <Tappable
                 key={status.label}
@@ -348,10 +558,11 @@ function StatusPanel() {
             );
           })}
         </View>
+        <Text style={styles.buyHint}>Clears itself after {CLEAR_HOURS} hours.</Text>
       </Card>
 
       <Card style={styles.card}>
-        <Text style={styles.cardTitle}>The group</Text>
+        <Text style={styles.cardTitle}>Right now</Text>
 
         {members.length === 0 ? (
           <EmptyState title="No members yet" />
@@ -379,7 +590,7 @@ function StatusPanel() {
       </Card>
 
       <Text style={styles.footnote}>
-        Statuses are visible to this group only, and nobody gets a notification when they change.
+        Visible to this group only. Nobody is notified when a status changes.
       </Text>
     </>
   );
@@ -402,17 +613,23 @@ const styles = StyleSheet.create({
   content: { padding: spacing.lg, paddingTop: 0, paddingBottom: spacing.xxl, gap: spacing.md },
 
   card: { gap: spacing.md },
+  cardNeeded: { borderColor: colors.warning, borderWidth: 1.5 },
   cardTitle: { ...typography.heading },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   cardBody: { flex: 1, gap: 2 },
   cardMeta: { ...typography.caption },
   itemTitle: { ...typography.heading, fontSize: 16 },
 
+  actionRow: { flexDirection: 'row', gap: spacing.sm },
+  action: { flex: 1 },
+
   buyRow: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm },
   buyField: { flex: 1 },
   buyInput: { fontSize: 20, fontWeight: '700' },
   buyButton: { flex: 1 },
   buyHint: { ...typography.caption, marginTop: -spacing.xs },
+
+  choreHistory: { ...typography.caption, marginTop: -spacing.xs },
 
   addCard: { gap: spacing.md, marginTop: spacing.sm },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
