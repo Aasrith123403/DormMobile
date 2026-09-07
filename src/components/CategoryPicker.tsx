@@ -1,18 +1,11 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { CATEGORIES, Category, CategoryId, getCategory } from '../core/categories';
 import { tapFeedback } from './haptics';
-import { colors, radius, spacing, typography } from '../theme';
+import { colors, fonts, radius, spacing, typography } from '../theme';
 
-/**
- * Horizontal category strip.
- *
- * Selection is optional — an expense with no category is filed under Other —
- * and the form pre-selects a guess from the description, so most of the time
- * this is confirmation rather than a decision.
- */
 export function CategoryPicker({
   value,
   onChange,
@@ -50,7 +43,7 @@ export function CategoryPicker({
               color={active ? category.color : colors.textFaint}
             />
             <Text
-              style={[styles.label, active && { color: category.color, fontWeight: '800' }]}
+              style={[styles.label, active && { color: category.color, fontFamily: fonts.bold }]}
               numberOfLines={1}
             >
               {category.label}
@@ -62,10 +55,8 @@ export function CategoryPicker({
   );
 }
 
-/** Compact category tag for list rows. */
 export function CategoryTag({ id }: { id: string | null | undefined }) {
   const category: Category = getCategory(id);
-
   return (
     <View style={[styles.tag, { backgroundColor: category.softColor }]}>
       <Ionicons name={category.icon as never} size={11} color={category.color} />
@@ -86,8 +77,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: colors.border,
   },
-  label: { ...typography.caption, fontSize: 11.5, fontWeight: '700', color: colors.textMuted },
-
+  label: { ...typography.caption, fontSize: 11.5, fontFamily: fonts.bold, color: colors.textMuted },
   tag: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -97,5 +87,5 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     alignSelf: 'flex-start',
   },
-  tagText: { fontSize: 10.5, fontWeight: '800' },
+  tagText: { fontSize: 10.5, fontFamily: fonts.bold },
 });

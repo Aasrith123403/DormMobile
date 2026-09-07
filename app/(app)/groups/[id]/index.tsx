@@ -1,342 +1,281 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { GroupHeader } from '../../../../src/components/GroupHeader';
 import { notify } from '../../../../src/components/dialog';
 import { successFeedback } from '../../../../src/components/haptics';
-import { FadeIn } from '../../../../src/components/motion';
-import { SettlePromptCard } from '../../../../src/components/SettlePromptCard';
-import {
-  Avatar,
-  Button,
-  Card,
-  EmptyState,
-  ErrorBanner,
-  IconChip,
-  Loading,
-  Tappable,
-} from '../../../../src/components/ui';
-import { FeedEntry, buildFeed, feedTimeAgo } from '../../../../src/core/feed';
+import { GlowOrb, GradientNumber, Smiley } from '../../../../src/components/shapes';
+import { Timeline, TimelineEntry } from '../../../../src/components/timeline';
+import { Avatar, Button, ErrorBanner, Loading } from '../../../../src/components/ui';
+import { FeedEntry, FeedEntryKind, feedTimeAgo } from '../../../../src/core/feed';
 import { formatMoney } from '../../../../src/core/money';
-import { currentMonthKey, previousMonthKey, summarizeMonth } from '../../../../src/core/spendSummary';
-import { todayIso } from '../../../../src/core/subscriptions';
-import { useAuth } from '../../../../src/data/auth';
 import { useGroup } from '../../../../src/data/groupContext';
-import { completeChore, markSupplyNeeded } from '../../../../src/data/mutations';
+import { PING_RESPONSES, useHouseFeed } from '../../../../src/data/useHouseFeed';
+import { completeChore, respondToPing } from '../../../../src/data/mutations';
 import { friendlyError } from '../../../../src/lib/supabase';
-import { colors, radius, shadowLifted, spacing, typography } from '../../../../src/theme';
+import { colors, fonts, gradients, radius, spacing, typography } from '../../../../src/theme';
 
-/**
- * The house feed — the group's landing screen.
- *
- * Nobody posts here. Every row is a byproduct of something that already
- * happened, or a date the app already holds. The screen's only job is to make
- * opening the app worth it without anyone having to maintain anything.
- */
-export default function HouseFeedScreen() {
+const TONE_BY_KIND: Record<FeedEntryKind, keyof typeof gradients> = {
+  ping: 'sunset',
+  event: 'violet',
+  'supply-needed': 'brand',
+  upcoming: 'brand',
+  expense: 'calm',
+  'supply-bought': 'positive',
+  'chore-done': 'positive',
+  settlement: 'positive',
+  status: 'calm',
+  'month-summary': 'calm',
+};
+
+function greeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
+export default function TodayScreen() {
   const router = useRouter();
-  const { userId } = useAuth();
-  const {
-    groupId,
-    expenses,
-    supplyItems,
-    chores,
-    statuses,
-    settlements,
-    subscriptions,
-    supplyTurns,
-    choreTurns,
-    members,
-    memberById,
-    displayName,
-    loading,
-    error,
-    refresh,
-  } = useGroup();
-
+  const { groupId, group, memberById, myNetCents, loading, error, refresh } = useGroup();
+  const { actionable, history, thisMonth } = useHouseFeed();
   const [refreshing, setRefreshing] = useState(false);
-  const today = todayIso();
-
+  const [busyId, setBusyId] = useState<string | null>(null);
   const onRefresh = async () => {
     setRefreshing(true);
     await refresh();
     setRefreshing(false);
   };
 
-  const thisMonth = useMemo(
-    () =>
-      summarizeMonth(
-        expenses.map((e) => ({
-          amountCents: e.amountCents,
-          paidBy: e.paid_by,
-          category: e.category,
-          createdAt: e.created_at,
-          splits: e.splits,
-          payers: e.payers,
-        })),
-        currentMonthKey(),
-        members.map((m) => m.id)
-      ),
-    [expenses, members]
-  );
+  const settled = myNetCents === 0;
+  const numberTone: keyof typeof gradients = settled
+    ? 'calm'
+    : myNetCents > 0
+      ? 'positive'
+      : 'sunset';
 
-  const lastMonth = useMemo(() => {
-    const summary = summarizeMonth(
-      expenses.map((e) => ({
-        amountCents: e.amountCents,
-        paidBy: e.paid_by,
-        category: e.category,
-        createdAt: e.created_at,
-        splits: e.splits,
-        payers: e.payers,
-      })),
-      previousMonthKey(currentMonthKey()),
-      members.map((m) => m.id)
-    );
-    return summary.isEmpty ? null : summary;
-  }, [expenses, members]);
+  const run = async (id: string, work: () => Promise<void>, failure: string) => {
+    if (busyId) return;
+    setBusyId(id);
+    try {
+      await work();
+      successFeedback();
+      await refresh();
+    } catch (caught) {
+      await notify({ title: failure, message: friendlyError(caught) });
+    } finally {
+      setBusyId(null);
+    }
+  };
 
-  const feed = useMemo(
+  const timeline = useMemo<TimelineEntry[]>(
     () =>
-      buildFeed({
-        viewerId: userId,
-        nameOf: displayName,
-        expenses: expenses.map((e) => ({
-          id: e.id,
-          description: e.description,
-          amountCents: e.amountCents,
-          paidBy: e.paid_by,
-          createdAt: e.created_at,
-          supplyItemId: e.supply_item_id,
-          repeatParentId: e.repeat_parent_id,
-        })),
-        supplyItems: supplyItems.map((item) => ({
-          id: item.id,
-          name: item.name,
-          isNeeded: item.is_needed,
-          neededAt: item.needed_at,
-          neededBy: item.needed_by,
-          turnUserId: supplyTurns.get(item.id) ?? null,
-        })),
-        chores: chores.map((chore) => ({
-          id: chore.id,
-          name: chore.name,
-          nextDue: chore.next_due,
-          turnUserId: choreTurns.get(chore.id) ?? null,
-          completions: chore.completions.map((c) => ({
-            id: c.id,
-            userId: c.user_id,
-            completedAt: c.completed_at,
-          })),
-        })),
-        statuses: statuses.map((s) => ({
-          userId: s.user_id,
-          status: s.status,
-          updatedAt: s.updated_at,
-        })),
-        settlements: settlements.map((s) => ({
-          id: s.id,
-          fromUser: s.from_user,
-          toUser: s.to_user,
-          amountCents: Math.round(Number(s.amount) * 100),
-          settledAt: s.settled_at,
-        })),
-        // Recurring money that has not posted yet: subscriptions plus any
-        // expense the user marked "repeats monthly".
-        upcoming: [
-          ...subscriptions
-            .filter((s) => s.active)
-            .map((s) => ({
-              id: `sub-${s.id}`,
-              name: s.name,
-              amountCents: s.monthlyCostCents,
-              dueDate: s.next_charge_date,
-            })),
-          ...expenses
-            .filter((e) => e.repeat_interval && e.repeat_next_date)
-            .map((e) => ({
-              id: `rep-${e.id}`,
-              name: e.description,
-              amountCents: e.amountCents,
-              dueDate: e.repeat_next_date!,
-            })),
+      actionable.map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        meta: [
+          ...(entry.detail ? [{ label: entry.detail }] : []),
+          ...(entry.amountCents !== null
+            ? [{ icon: 'cash-outline', label: formatMoney(entry.amountCents) }]
+            : []),
         ],
-        lastMonth: lastMonth
-          ? {
-              month: lastMonth.month,
-              label: lastMonth.label,
-              totalCents: lastMonth.totalCents,
-              byCategory: lastMonth.byCategory,
-            }
-          : null,
-        today,
-      }),
-    [
-      userId,
-      displayName,
-      expenses,
-      supplyItems,
-      chores,
-      statuses,
-      settlements,
-      subscriptions,
-      supplyTurns,
-      choreTurns,
-      lastMonth,
-      today,
-    ]
+        tone: TONE_BY_KIND[entry.kind],
+        icon: entry.icon,
+        action: <InlineAction entry={entry} busyId={busyId} onRun={run} />,
+      })),
+    [actionable, busyId]
   );
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-      <GroupHeader subtitle={thisMonth.isEmpty ? undefined : `${formatMoney(thisMonth.totalCents)} this month`} />
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+        }
+        showsVerticalScrollIndicator={false}
+      >
+        <GlowOrb size={340} tone="brand" opacity={0.4} style={styles.glowRight} />
+        <GlowOrb size={260} tone="violet" opacity={0.3} style={styles.glowLeft} />
 
-      {error ? <ErrorBanner message={error} onRetry={refresh} /> : null}
+        <View style={styles.header}>
+          <View style={styles.topRow}>
+            <Pressable
+              onPress={() => router.push('/(app)/groups')}
+              hitSlop={8}
+              style={styles.groupPill}
+              accessibilityLabel="Switch group"
+            >
+              <View style={styles.groupDot} />
+              <Text style={styles.groupName} numberOfLines={1}>
+                {group?.name ?? 'Your house'}
+              </Text>
+              <Ionicons name="chevron-down" size={13} color={colors.textMuted} />
+            </Pressable>
 
-      {loading && feed.length === 0 ? (
-        <Loading label="Catching up" />
-      ) : (
-        <FlatList
-          data={feed}
-          keyExtractor={(entry) => entry.id}
-          contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          showsVerticalScrollIndicator={false}
-          ListHeaderComponent={
-            <View style={styles.header}>
-              <SettlePromptCard />
+            <Pressable
+              onPress={() => router.push({ pathname: '/(app)/group-info', params: { groupId } })}
+              hitSlop={8}
+              style={styles.iconButton}
+              accessibilityLabel="Invite people"
+            >
+              <Ionicons name="person-add-outline" size={18} color={colors.text} />
+            </Pressable>
+          </View>
 
-              {!thisMonth.isEmpty ? (
-                <Tappable
-                  onPress={() => router.push(`/(app)/groups/${groupId}/insights`)}
-                  style={styles.glance}
-                >
-                  <IconChip icon="stats-chart" color={colors.primary} background={colors.primarySoft} size={34} />
-                  <View style={styles.glanceBody}>
-                    <Text style={styles.glanceTitle}>
-                      {formatMoney(thisMonth.totalCents)} this month
-                    </Text>
-                    <Text style={styles.glanceMeta}>
-                      {thisMonth.expenseCount}{' '}
-                      {thisMonth.expenseCount === 1 ? 'expense' : 'expenses'}
-                      {thisMonth.byCategory[0]
-                        ? ` · mostly ${thisMonth.byCategory[0].category.label.toLowerCase()}`
-                        : ''}
-                    </Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={17} color={colors.textFaint} />
-                </Tappable>
-              ) : null}
+          <Text style={styles.greeting}>{greeting()}</Text>
+
+          <GradientNumber
+            value={settled ? 'All square' : formatMoney(Math.abs(myNetCents))}
+            size={settled ? 34 : 54}
+            tone={numberTone}
+            width={330}
+          />
+
+          <Text style={styles.netLabel}>
+            {settled
+              ? 'Nobody owes anybody'
+              : myNetCents > 0
+                ? "you're owed across the house"
+                : 'you owe across the house'}
+            {!thisMonth.isEmpty ? ` · ${formatMoney(thisMonth.totalCents)} spent this month` : ''}
+          </Text>
+        </View>
+
+        <View style={styles.body}>
+          {error ? <ErrorBanner message={error} onRetry={refresh} /> : null}
+
+          {/* The only way to create anything, and the only lit control. */}
+          <Button
+            title="What's on your mind?"
+            icon="add"
+            onPress={() => router.push({ pathname: '/(app)/add', params: { groupId } })}
+          />
+
+          {loading && actionable.length === 0 && history.length === 0 ? (
+            <Loading label="Catching up" />
+          ) : null}
+
+          {timeline.length > 0 ? (
+            <>
+              <Text style={styles.section}>Waiting on you</Text>
+              <Timeline entries={timeline} />
+            </>
+          ) : !loading ? (
+            <View style={styles.clear}>
+              <Smiley size={78} tone="brand" />
+              <Text style={styles.clearTitle}>Nothing needs you</Text>
+              <Text style={styles.clearBody}>
+                No chores due, nothing run out, nobody waiting on a reply.
+              </Text>
             </View>
-          }
-          renderItem={({ item, index }) => (
-            <FadeIn index={index} distance={6}>
-              <FeedRow
-                entry={item}
-                avatarName={item.actorId ? (memberById.get(item.actorId)?.name ?? '?') : '?'}
-                onRefresh={refresh}
-              />
-            </FadeIn>
-          )}
-          ListEmptyComponent={
-            <EmptyState
-              icon="home-outline"
-              title="Nothing has happened yet"
-              message="Log an expense, add a staple or a chore — this fills itself in from what everyone does."
-              action={
-                <Button
-                  title="Add an expense"
-                  onPress={() => router.push({ pathname: '/(app)/expense/new', params: { groupId } })}
-                />
-              }
-            />
-          }
-        />
-      )}
+          ) : null}
+
+          {history.length > 0 ? (
+            <>
+              <Text style={styles.section}>Around the house</Text>
+              <View style={styles.historyCard}>
+                {history.slice(0, 12).map((entry, index) => (
+                  <HistoryRow
+                    key={entry.id}
+                    entry={entry}
+                    first={index === 0}
+                    avatarName={entry.actorId ? (memberById.get(entry.actorId)?.name ?? '?') : '?'}
+                  />
+                ))}
+              </View>
+            </>
+          ) : null}
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
-function FeedRow({
+function InlineAction({
+  entry,
+  busyId,
+  onRun,
+}: {
+  entry: FeedEntry;
+  busyId: string | null;
+  onRun: (id: string, work: () => Promise<void>, failure: string) => Promise<void>;
+}) {
+  const busy = busyId === entry.id;
+  if (entry.kind === 'ping') {
+    const pingId = entry.id.replace(/^ping-/, '');
+    return (
+      <View style={styles.replies}>
+        {PING_RESPONSES.map((response) => (
+          <Pressable
+            key={response.id}
+            disabled={busy}
+            onPress={() =>
+              void onRun(entry.id, () => respondToPing(pingId, response.id), 'Could not reply')
+            }
+            style={({ pressed }) => [styles.reply, pressed && styles.pressed]}
+          >
+            <Text style={styles.replyText}>{response.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+    );
+  }
+
+  if (entry.kind === 'upcoming' && entry.id.startsWith('chore-due-')) {
+    const choreId = entry.id.replace(/^chore-due-/, '');
+    return (
+      <Pressable
+        disabled={busy}
+        onPress={() => void onRun(entry.id, () => completeChore(choreId), 'Could not update')}
+        style={({ pressed }) => [styles.doneChip, pressed && styles.pressed]}
+      >
+        <Ionicons name="checkmark" size={14} color={colors.textInverse} />
+        <Text style={styles.doneChipText}>Mark done</Text>
+      </Pressable>
+    );
+  }
+
+  return null;
+}
+
+function HistoryRow({
   entry,
   avatarName,
-  onRefresh,
+  first,
 }: {
   entry: FeedEntry;
   avatarName: string;
-  onRefresh: () => Promise<void>;
+  first: boolean;
 }) {
-  const { supplyItems, chores } = useGroup();
-  const [busy, setBusy] = useState(false);
-
-  /**
-   * The one-tap resolution for an actionable row, done inline so the feed is
-   * a place things get finished rather than a list of places to navigate to.
-   */
-  const act = async () => {
-    if (busy) return;
-    setBusy(true);
-
-    try {
-      if (entry.kind === 'supply-needed') {
-        const item = supplyItems.find((s) => `supply-needed-${s.id}` === entry.id);
-        if (item) {
-          // Un-flag only; buying takes an amount, which lives on the House tab.
-          await markSupplyNeeded(item.id, false);
-        }
-      } else if (entry.id.startsWith('chore-due-')) {
-        const chore = chores.find((c) => `chore-due-${c.id}` === entry.id);
-        if (chore) await completeChore(chore.id);
-      }
-
-      successFeedback();
-      await onRefresh();
-    } catch (caught) {
-      await notify({ title: 'Could not update', message: friendlyError(caught) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const isChore = entry.id.startsWith('chore-due-');
-
   return (
-    <View style={[styles.row, entry.actionable && styles.rowActionable]}>
+    <View style={[styles.historyRow, !first && styles.historyRowDivided]}>
       {entry.actorId ? (
         <Avatar name={avatarName} id={entry.actorId} size={34} />
       ) : (
-        <IconChip
-          icon={entry.icon}
-          color={entry.actionable ? colors.warning : colors.textMuted}
-          background={entry.actionable ? colors.warningSoft : colors.surfaceAlt}
-          size={34}
-        />
+        <View style={styles.historyGlyph}>
+          <Ionicons name={entry.icon as never} size={16} color={colors.textMuted} />
+        </View>
       )}
 
-      <View style={styles.rowBody}>
-        <Text style={styles.rowTitle}>{entry.title}</Text>
-        {entry.detail ? <Text style={styles.rowDetail}>{entry.detail}</Text> : null}
-
-        {entry.actionable ? (
-          <Button
-            title={isChore ? 'Mark done' : 'Got it'}
-            variant="subtle"
-            size="sm"
-            loading={busy}
-            onPress={act}
-            style={styles.rowAction}
-          />
+      <View style={styles.historyBody}>
+        <Text style={styles.historyTitle} numberOfLines={2}>
+          {entry.title}
+        </Text>
+        {entry.detail ? (
+          <Text style={styles.historyDetail} numberOfLines={1}>
+            {entry.detail}
+          </Text>
         ) : null}
       </View>
 
-      <View style={styles.rowRight}>
+      <View style={styles.historyTail}>
         {entry.amountCents !== null ? (
-          <Text style={styles.rowAmount}>{formatMoney(entry.amountCents)}</Text>
+          <Text style={styles.historyMoney}>{formatMoney(entry.amountCents)}</Text>
         ) : null}
-        {!entry.actionable ? <Text style={styles.rowTime}>{feedTimeAgo(entry.at)}</Text> : null}
+        <Text style={styles.historyTime}>{feedTimeAgo(entry.at)}</Text>
       </View>
     </View>
   );
@@ -344,39 +283,86 @@ function FeedRow({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  list: { padding: spacing.lg, paddingTop: 0, paddingBottom: spacing.xxl, gap: spacing.sm },
-  header: { gap: spacing.md, marginBottom: spacing.sm },
-
-  glance: {
+  scroll: { paddingBottom: spacing.xxxl },
+  glowRight: { position: 'absolute', top: -170, right: -120 },
+  glowLeft: { position: 'absolute', top: -130, left: -110 },
+  header: { paddingHorizontal: spacing.xl, paddingTop: spacing.sm, gap: 2 },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xl,
+  },
+  groupPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    maxWidth: '72%',
+    paddingVertical: 9,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface,
+  },
+  groupDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.pink },
+  groupName: { fontFamily: fonts.semibold, fontSize: 14, color: colors.text },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+  },
+  greeting: { fontFamily: fonts.regular, fontSize: 14.5, color: colors.textMuted },
+  netLabel: { ...typography.caption, marginTop: -spacing.xs, lineHeight: 18 },
+  body: { paddingHorizontal: spacing.xl, gap: spacing.md, marginTop: spacing.lg },
+  section: { ...typography.title, marginTop: spacing.lg },
+  clear: { alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.xxl },
+  clearTitle: { ...typography.title, marginTop: spacing.sm },
+  clearBody: { ...typography.body, textAlign: 'center', maxWidth: 270 },
+  replies: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  reply: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 9,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceAlt,
+  },
+  pressed: { opacity: 0.6 },
+  replyText: { fontFamily: fonts.medium, fontSize: 12.5, color: colors.text },
+  doneChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 9,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primary,
+  },
+  doneChipText: { fontFamily: fonts.semibold, fontSize: 12.5, color: colors.textInverse },
+  historyCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.lg,
+  },
+  historyRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    padding: spacing.md,
+    paddingVertical: spacing.md,
   },
-  glanceBody: { flex: 1, gap: 2 },
-  glanceTitle: { ...typography.bodyStrong },
-  glanceMeta: { ...typography.caption },
-
-  row: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+  historyRowDivided: { borderTopWidth: 1, borderTopColor: colors.border },
+  historyGlyph: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  rowActionable: { borderColor: colors.warning, borderWidth: 1.5 },
-  rowBody: { flex: 1, gap: 3 },
-  rowTitle: { ...typography.body, lineHeight: 20 },
-  rowDetail: { ...typography.caption },
-  rowAction: { alignSelf: 'flex-start', marginTop: spacing.xs },
-  rowRight: { alignItems: 'flex-end', gap: 2 },
-  rowAmount: { ...typography.money, fontSize: 14 },
-  rowTime: { ...typography.caption, fontSize: 11 },
+  historyBody: { flex: 1, gap: 1 },
+  historyTitle: { fontFamily: fonts.medium, fontSize: 14, lineHeight: 19, color: colors.text },
+  historyDetail: { ...typography.caption, fontSize: 12 },
+  historyTail: { alignItems: 'flex-end', gap: 2 },
+  historyMoney: { fontFamily: fonts.semibold, fontSize: 13.5, color: colors.text },
+  historyTime: { fontFamily: fonts.regular, fontSize: 11, color: colors.textFaint },
 });

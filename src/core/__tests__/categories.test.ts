@@ -10,7 +10,6 @@ describe('the catalogue', () => {
   it('has unique ids and no missing display fields', () => {
     const ids = CATEGORIES.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
-
     for (const category of CATEGORIES) {
       expect(category.label).not.toBe('');
       expect(category.icon).not.toBe('');
@@ -50,7 +49,6 @@ describe('detectCategory', () => {
   });
 
   it('prefers the most specific keyword when several match', () => {
-    // "uber eats" (dining) is longer and more specific than "uber" (transport).
     expect(detectCategory('Uber Eats dinner')).toBe('dining');
   });
 

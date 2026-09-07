@@ -28,21 +28,14 @@ import {
 } from '../../../../src/core/spendSummary';
 import { useAuth } from '../../../../src/data/auth';
 import { useGroup } from '../../../../src/data/groupContext';
-import { colors, radius, spacing, typography } from '../../../../src/theme';
+import { colors, fonts, radius, spacing, typography } from '../../../../src/theme';
 
-/**
- * Where the money actually went. Deliberately separate from Balances: this
- * answers "what did we spend on", not "who owes whom".
- */
 export default function InsightsScreen() {
   const { userId } = useAuth();
   const { expenses, members, memberById, error, refresh } = useGroup();
-
   const [range, setRange] = useState<InsightRange>('month');
   const [refreshing, setRefreshing] = useState(false);
   const [summaryMonth, setSummaryMonth] = useState(currentMonthKey());
-
-  /** Shared shape for the month-end summary, derived from existing expenses. */
   const summaryRows = useMemo(
     () =>
       expenses.map((e) => ({
@@ -84,10 +77,9 @@ export default function InsightsScreen() {
   }, [expenses, range, userId, members]);
 
   const peakMonth = Math.max(1, ...insights.monthly.map((m) => m.totalCents));
-
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-      <GroupHeader subtitle="Where the money went" />
+      <GroupHeader title="Insights" subtitle="Where the money went" tone="calm" />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -188,7 +180,6 @@ export default function InsightsScreen() {
               </Card>
             </View>
 
-            {/* --------------------------------------------- categories -- */}
             <Card style={styles.card}>
               <Text style={styles.cardTitle}>By category</Text>
               {insights.byCategory.map((row, index) => (
@@ -213,7 +204,6 @@ export default function InsightsScreen() {
               ))}
             </Card>
 
-            {/* ------------------------------------------------ members -- */}
             <Card style={styles.card}>
               <Text style={styles.cardTitle}>Who spent what</Text>
               <Text style={styles.cardHint}>
@@ -238,7 +228,6 @@ export default function InsightsScreen() {
                 })}
             </Card>
 
-            {/* ------------------------------------------------- monthly -- */}
             {insights.monthly.length > 1 ? (
               <Card style={styles.card}>
                 <Text style={styles.cardTitle}>Month by month</Text>
@@ -287,16 +276,14 @@ export default function InsightsScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.md },
-
   statRow: { flexDirection: 'row', gap: spacing.md },
   statCard: { flex: 1, gap: 2 },
   statLabel: { ...typography.label },
   statValue: { ...typography.moneyLarge, fontSize: 23 },
   statMeta: { ...typography.caption },
-
   summaryHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
   summaryTotal: { ...typography.hero, fontSize: 34, marginTop: -spacing.xs },
-  change: { ...typography.caption, fontWeight: '700' },
+  change: { ...typography.caption, fontFamily: fonts.bold },
   monthRow: { gap: spacing.sm, paddingTop: spacing.xs },
   monthChip: {
     paddingHorizontal: spacing.md,
@@ -305,32 +292,27 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceAlt,
   },
   monthChipActive: { backgroundColor: colors.primarySoft },
-  monthChipText: { ...typography.caption, fontWeight: '700' },
+  monthChipText: { ...typography.caption, fontFamily: fonts.bold },
   monthChipTextActive: { color: colors.primary },
-
   card: { gap: spacing.md },
   cardTitle: { ...typography.heading },
   cardHint: { ...typography.caption, marginTop: -spacing.sm },
-
   categoryRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   categoryBody: { flex: 1, gap: 5 },
   categoryTop: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
   categoryName: { ...typography.bodyStrong },
   categoryAmount: { ...typography.money, fontSize: 15 },
   categoryMeta: { ...typography.caption, fontSize: 11 },
-
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   memberName: { ...typography.body, flex: 1 },
   memberAmounts: { alignItems: 'flex-end' },
   memberShare: { ...typography.money, fontSize: 15 },
   memberPaid: { ...typography.caption, fontSize: 11 },
-
   chart: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: spacing.sm },
   barColumn: { flex: 1, alignItems: 'center', gap: 5 },
   bar: { width: '72%', backgroundColor: colors.primary, borderRadius: radius.sm, minHeight: 6 },
-  barValue: { ...typography.caption, fontSize: 10, fontWeight: '700' },
+  barValue: { ...typography.caption, fontSize: 10, fontFamily: fonts.bold },
   barLabel: { ...typography.caption, fontSize: 10.5 },
-
   largestRow: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm },
   largestAmount: { ...typography.moneyLarge, fontSize: 26 },
   largestMeta: { ...typography.caption },

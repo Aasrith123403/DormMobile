@@ -12,13 +12,11 @@ import { colors, spacing, typography } from '../../src/theme';
 export default function ProfileScreen() {
   const router = useRouter();
   const { profile, session, updateProfile, signOut } = useAuth();
-
   const [name, setName] = useState('');
   const [venmo, setVenmo] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
-
   useEffect(() => {
     setName(profile?.name ?? '');
     setVenmo(profile?.venmo_username ?? '');
@@ -26,13 +24,10 @@ export default function ProfileScreen() {
 
   const handle = normalizeVenmoHandle(venmo);
   const venmoError = handle && !isValidVenmoHandle(handle) ? 'Letters, numbers, - and _ only.' : null;
-
   const save = async () => {
     if (busy || venmoError) return;
-
     setBusy(true);
     setError(null);
-
     try {
       await updateProfile({
         name: name.trim() || 'Roommate',
@@ -111,7 +106,6 @@ const styles = StyleSheet.create({
   headerText: { flex: 1, gap: 2 },
   headerName: { ...typography.title },
   headerEmail: { ...typography.caption },
-
   card: { gap: spacing.xs, marginTop: spacing.md },
   cardTitle: { ...typography.label, color: colors.text },
   cardText: { ...typography.body, color: colors.textMuted, lineHeight: 21 },

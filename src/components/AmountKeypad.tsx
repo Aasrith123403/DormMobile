@@ -1,26 +1,11 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { tapFeedback } from './haptics';
-import { colors, radius, spacing, typography } from '../theme';
+import { colors, fonts, radius, typography } from '../theme';
 
-/**
- * A dedicated amount pad.
- *
- * The system keyboard on a numeric field is slower than it looks: it animates
- * in, covers half the screen, and pushes the rest of the form out of view. A
- * fixed pad keeps the whole expense on screen at once, which is what makes
- * logging land in a few taps rather than a scroll-and-hunt — and it is why
- * per-person custom shares are edited here too rather than in text fields
- * that the keyboard would sit on top of.
- *
- * Emits raw keys rather than a finished string so the parent can decide what
- * a keypress means — notably "start fresh" when the pad is handed to a new
- * field. `applyKey` in core/amountInput does the actual text maths.
- */
-
-export type KeypadKey = string; // '0'-'9' | '.' | 'delete' | 'clear'
+export type KeypadKey = string;
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'delete'];
 
@@ -67,5 +52,5 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   keyPressed: { backgroundColor: colors.surfaceSunken },
-  keyText: { ...typography.title, fontSize: 25, fontWeight: '600' },
+  keyText: { ...typography.title, fontSize: 25, fontFamily: fonts.semibold },
 });

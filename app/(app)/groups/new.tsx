@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button, Card, ErrorBanner, Field, Screen } from '../../../src/components/ui';
 import { createGroup } from '../../../src/data/groups';
 import { friendlyError } from '../../../src/lib/supabase';
-import { colors, radius, spacing, typography } from '../../../src/theme';
+import { colors, fonts, radius, spacing, typography } from '../../../src/theme';
 
 const SUGGESTIONS = ['Dorm', 'Apartment', 'Ski Trip', 'Road Trip'];
 
@@ -14,15 +14,12 @@ export default function NewGroupScreen() {
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
   const submit = async () => {
     if (busy || !name.trim()) return;
     setBusy(true);
     setError(null);
-
     try {
       const group = await createGroup(name);
-      // Straight into the new group, with the join code ready to share.
       router.replace(`/(app)/groups/${group.id}`);
     } catch (caught) {
       setError(friendlyError(caught));
@@ -82,7 +79,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   chipPressed: { backgroundColor: colors.primarySoft },
-  chipText: { ...typography.body, fontWeight: '500' },
+  chipText: { ...typography.body, fontFamily: fonts.medium },
   note: { marginTop: spacing.md, gap: spacing.xs },
   noteTitle: { ...typography.label, color: colors.text },
   noteText: { ...typography.body, color: colors.textMuted, lineHeight: 21 },

@@ -12,7 +12,6 @@ import {
 
 describe('nextTurn', () => {
   const members = ['ana', 'ben', 'cass'];
-
   it('moves to the following member', () => {
     expect(nextTurn(members, 'ana')).toBe('ben');
     expect(nextTurn(members, 'ben')).toBe('cass');
@@ -60,7 +59,6 @@ describe('reconcileTurn', () => {
 
 describe('nextSupplyBuyer', () => {
   const members = ['ana', 'ben', 'cass'];
-
   it('never picks the person who bought this item last', () => {
     const next = nextSupplyBuyer({
       memberIds: members,
@@ -130,10 +128,8 @@ describe('nextSupplyBuyer', () => {
   });
 
   it('spreads the load evenly when the same item is bought repeatedly', () => {
-    // Simulate ten runs, always following the app's answer.
     let last: string | null = null;
     const counts: Record<string, number> = {};
-
     for (let i = 0; i < 9; i += 1) {
       const buyer: string = nextSupplyBuyer({
         memberIds: members,
@@ -144,13 +140,10 @@ describe('nextSupplyBuyer', () => {
       last = buyer;
     }
 
-    // Nine runs across three people should land three each.
     expect(members.map((m) => counts[m])).toEqual([3, 3, 3]);
   });
 
   it('lets a lagging member catch up rather than strictly alternating', () => {
-    // Cass joined late and has bought nothing; they should come up next even
-    // though Ben is "next in line" by roster order.
     expect(
       nextSupplyBuyer({
         memberIds: members,

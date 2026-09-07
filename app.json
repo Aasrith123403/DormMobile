@@ -6,18 +6,20 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "roomledger",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0F172A"
+      "backgroundColor": "#141020"
     },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.roomledger.app",
       "infoPlist": {
-        "LSApplicationQueriesSchemes": ["venmo"],
+        "LSApplicationQueriesSchemes": [
+          "venmo"
+        ],
         "NSCameraUsageDescription": "RoomLedger uses the camera to scan receipts so expense amounts fill in automatically.",
         "NSPhotoLibraryUsageDescription": "RoomLedger lets you attach a receipt photo from your library to a shared expense."
       }
@@ -25,7 +27,7 @@
     "android": {
       "package": "com.roomledger.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#141020",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -36,11 +38,26 @@
         {
           "scheme": "venmo"
         }
+      ],
+      "versionCode": 1,
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
+      "bundler": "metro",
+      "output": "single",
       "favicon": "./assets/favicon.png",
-      "bundler": "metro"
+      "name": "RoomLedger",
+      "shortName": "RoomLedger",
+      "lang": "en",
+      "scope": "/",
+      "startUrl": "/",
+      "display": "standalone",
+      "orientation": "portrait",
+      "themeColor": "#141020",
+      "backgroundColor": "#141020",
+      "description": "Shared expenses, chores and plans for the people you live with."
     },
     "plugins": [
       "expo-router",
@@ -51,7 +68,9 @@
           "photosPermission": "RoomLedger lets you attach a receipt photo from your library to a shared expense.",
           "cameraPermission": "RoomLedger uses the camera to scan receipts so expense amounts fill in automatically."
         }
-      ]
-    ]
+      ],
+      "expo-font"
+    ],
+    "description": "Shared expenses, chores and plans for the people you live with."
   }
 }

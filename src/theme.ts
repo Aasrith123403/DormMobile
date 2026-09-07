@@ -1,58 +1,47 @@
 import { Platform, TextStyle, ViewStyle } from 'react-native';
 
-/**
- * The design system.
- *
- * Money is the reason people open RoomLedger, so the type scale is built
- * around it: amounts get the largest, heaviest, tabular type on every screen,
- * and green/red carry one meaning consistently — green is "coming to you",
- * red is "going out". Everything else is deliberately quiet so the numbers
- * carry the screen.
- */
-
 export const colors = {
-  background: '#F5F6FA',
-  backgroundAlt: '#EEF0F6',
-  surface: '#FFFFFF',
-  surfaceAlt: '#F1F3F8',
-  surfaceSunken: '#E9ECF3',
-  border: '#E4E7EF',
-  borderStrong: '#C9CFDD',
-
-  text: '#0B1220',
-  textMuted: '#5B6779',
-  textFaint: '#93A0B4',
+  background: '#141020',
+  backgroundAlt: '#1A1528',
+  surface: '#221C36',
+  surfaceAlt: '#2C2545',
+  surfaceSunken: '#1B1629',
+  surfaceRaised: '#332B4F',
+  border: '#2F2749',
+  borderStrong: '#413764',
+  text: '#FFFFFF',
+  textMuted: '#A79FC6',
+  textFaint: '#6B6390',
+  textSoft: '#8A82AC',
   textInverse: '#FFFFFF',
-
-  primary: '#4F46E5',
-  primaryDark: '#3F35D1',
-  primaryLight: '#7C74F0',
-  primarySoft: '#ECEBFE',
-
-  positive: '#03875F',
-  positiveSoft: '#E2F5EE',
-  negative: '#D01D4B',
-  negativeSoft: '#FDE9EF',
-
-  venmo: '#008CFF',
-  warning: '#B45309',
-  warningSoft: '#FDF2E3',
-
-  /** Overlay behind modals and dialogs. */
-  scrim: 'rgba(11, 18, 32, 0.45)',
+  primary: '#7C5CFC',
+  primaryDark: '#6743E8',
+  primaryLight: '#A78BFA',
+  primarySoft: '#2A2350',
+  pink: '#EC4899',
+  pinkSoft: '#3A1F3D',
+  coral: '#FB7185',
+  action: '#7C5CFC',
+  actionDark: '#6743E8',
+  actionSoft: '#2A2350',
+  positive: '#34D399',
+  positiveSoft: '#12352C',
+  negative: '#FB7185',
+  negativeSoft: '#3A1F2C',
+  venmo: '#3D95FF',
+  warning: '#FBBF24',
+  warningSoft: '#3A2F16',
+  scrim: 'rgba(8, 5, 16, 0.72)',
 } as const;
 
-/**
- * Gradients give the hero cards depth without any image assets.
- * Each is a `[from, to]` pair for expo-linear-gradient.
- */
 export const gradients = {
-  brand: ['#5B54F0', '#8B5CF6'] as const,
-  positive: ['#059669', '#0EA47A'] as const,
-  negative: ['#E11D48', '#F43F5E'] as const,
-  neutral: ['#475569', '#64748B'] as const,
-  night: ['#111C33', '#25324F'] as const,
-};
+  brand: ['#8B5CF6', '#EC4899'] as const,
+  violet: ['#7C5CFC', '#A855F7'] as const,
+  sunset: ['#A855F7', '#FB7185'] as const,
+  positive: ['#34D399', '#059669'] as const,
+  negative: ['#FB7185', '#E11D48'] as const,
+  calm: ['#4A4270', '#2F2749'] as const,
+} as const;
 
 export const spacing = {
   xs: 4,
@@ -61,97 +50,162 @@ export const spacing = {
   lg: 16,
   xl: 24,
   xxl: 32,
-  xxxl: 44,
+  xxxl: 48,
 } as const;
 
 export const radius = {
-  sm: 8,
-  md: 12,
-  lg: 18,
-  xl: 24,
-  xxl: 30,
+  sm: 12,
+  md: 18,
+  lg: 26,
+  xl: 32,
+  xxl: 40,
   pill: 999,
 } as const;
 
-/** Resting elevation for cards. */
 export const shadow: ViewStyle = Platform.select({
   ios: {
-    shadowColor: '#0B1220',
-    shadowOpacity: 0.05,
+    shadowColor: '#000000',
+    shadowOpacity: 0.35,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },
   },
   android: { elevation: 2 },
-  default: {
-    // react-native-web maps boxShadow through style, and the RN shadow props
-    // are ignored there.
-    boxShadow: '0 6px 18px rgba(11, 18, 32, 0.06)',
-  },
+  default: { boxShadow: '0 6px 14px rgba(0, 0, 0, 0.35)' } as ViewStyle,
 }) as ViewStyle;
 
-/** Stronger elevation for hero cards and floating actions. */
 export const shadowLifted: ViewStyle = Platform.select({
   ios: {
-    shadowColor: '#0B1220',
-    shadowOpacity: 0.16,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
+    shadowColor: '#000000',
+    shadowOpacity: 0.55,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 14 },
   },
-  android: { elevation: 8 },
-  default: { boxShadow: '0 14px 30px rgba(11, 18, 32, 0.18)' },
+  android: { elevation: 12 },
+  default: { boxShadow: '0 14px 28px rgba(0, 0, 0, 0.55)' } as ViewStyle,
 }) as ViewStyle;
 
-const numeric: TextStyle = { fontVariant: ['tabular-nums'] };
+export const glow = (color: string = colors.primary): ViewStyle =>
+  Platform.select({
+    ios: {
+      shadowColor: color,
+      shadowOpacity: 0.55,
+      shadowRadius: 20,
+      shadowOffset: { width: 0, height: 8 },
+    },
+    android: { elevation: 10 },
+    default: { boxShadow: `0 8px 22px ${color}66` } as ViewStyle,
+  }) as ViewStyle;
 
-export const typography = {
-  hero: { fontSize: 44, fontWeight: '800', letterSpacing: -1.2, color: colors.text, ...numeric } as TextStyle,
-  display: { fontSize: 32, fontWeight: '800', letterSpacing: -0.8, color: colors.text } as TextStyle,
-  title: { fontSize: 22, fontWeight: '700', letterSpacing: -0.3, color: colors.text } as TextStyle,
-  heading: { fontSize: 17, fontWeight: '700', color: colors.text } as TextStyle,
-  body: { fontSize: 15, fontWeight: '400', color: colors.text } as TextStyle,
-  bodyStrong: { fontSize: 15, fontWeight: '600', color: colors.text } as TextStyle,
-  label: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.7,
-    textTransform: 'uppercase',
-    color: colors.textMuted,
-  } as TextStyle,
-  caption: { fontSize: 12.5, fontWeight: '500', color: colors.textFaint } as TextStyle,
-  money: { fontSize: 16, fontWeight: '700', color: colors.text, ...numeric } as TextStyle,
-  moneyLarge: { fontSize: 30, fontWeight: '800', letterSpacing: -0.6, color: colors.text, ...numeric } as TextStyle,
+// Use these instead of fontWeight: React Native ignores fontWeight when a
+// style names a font family, so bold silently disappears on Android.
+export const fonts = {
+  regular: 'Poppins_400Regular',
+  medium: 'Poppins_500Medium',
+  semibold: 'Poppins_600SemiBold',
+  bold: 'Poppins_700Bold',
 } as const;
 
-/** Deterministic avatar colours, so a person looks the same on every screen. */
-const AVATAR_PALETTE: readonly (readonly [string, string])[] = [
-  ['#6366F1', '#8B5CF6'],
-  ['#0891B2', '#22D3EE'],
-  ['#DB2777', '#F472B6'],
-  ['#EA580C', '#FB923C'],
-  ['#059669', '#34D399'],
-  ['#2563EB', '#60A5FA'],
-  ['#B45309', '#F59E0B'],
-  ['#7C3AED', '#A78BFA'],
+export const typography = {
+  hero: {
+    fontFamily: fonts.bold,
+    fontSize: 36,
+    lineHeight: 42,
+    color: colors.text,
+    letterSpacing: -1,
+  } as TextStyle,
+  display: {
+    fontFamily: fonts.bold,
+    fontSize: 28,
+    lineHeight: 34,
+    color: colors.text,
+    letterSpacing: -0.6,
+  } as TextStyle,
+  title: {
+    fontFamily: fonts.semibold,
+    fontSize: 21,
+    lineHeight: 27,
+    color: colors.text,
+    letterSpacing: -0.3,
+  } as TextStyle,
+  heading: {
+    fontFamily: fonts.semibold,
+    fontSize: 16,
+    lineHeight: 22,
+    color: colors.text,
+    letterSpacing: -0.1,
+  } as TextStyle,
+  body: {
+    fontFamily: fonts.regular,
+    fontSize: 14.5,
+    lineHeight: 21,
+    color: colors.textMuted,
+  } as TextStyle,
+  bodyStrong: {
+    fontFamily: fonts.medium,
+    fontSize: 14.5,
+    lineHeight: 21,
+    color: colors.text,
+  } as TextStyle,
+
+  label: {
+    fontFamily: fonts.semibold,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    color: colors.textFaint,
+  } as TextStyle,
+  caption: {
+    fontFamily: fonts.regular,
+    fontSize: 12.5,
+    lineHeight: 17,
+    color: colors.textMuted,
+  } as TextStyle,
+  money: {
+    fontFamily: fonts.semibold,
+    fontSize: 15.5,
+    color: colors.text,
+    fontVariant: ['tabular-nums'],
+  } as TextStyle,
+  moneyLarge: {
+    fontFamily: fonts.bold,
+    fontSize: 44,
+    lineHeight: 50,
+    color: colors.text,
+    letterSpacing: -1.5,
+    fontVariant: ['tabular-nums'],
+  } as TextStyle,
+} as const;
+
+const AVATAR_PAIRS: readonly (readonly [string, string])[] = [
+  ['#A78BFA', '#7C3AED'],
+  ['#F472B6', '#DB2777'],
+  ['#818CF8', '#4F46E5'],
+  ['#FB7185', '#E11D48'],
+  ['#C084FC', '#9333EA'],
+  ['#60A5FA', '#2563EB'],
+  ['#34D399', '#059669'],
+  ['#FBBF24', '#D97706'],
 ];
 
-function hashOf(seed: string): number {
+function hashSeed(seed: string): number {
   let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash * 31 + seed.charCodeAt(i)) % 100_000;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
   }
   return hash;
 }
 
 export function avatarGradient(seed: string): readonly [string, string] {
-  return AVATAR_PALETTE[hashOf(seed ?? '?') % AVATAR_PALETTE.length];
+  return AVATAR_PAIRS[hashSeed(seed) % AVATAR_PAIRS.length];
 }
 
 export function avatarColor(seed: string): string {
-  return avatarGradient(seed)[0];
+  return avatarGradient(seed)[1];
 }
 
 export function initials(name: string): string {
-  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean);
+  const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '?';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();

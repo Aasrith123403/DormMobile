@@ -1,10 +1,11 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import React from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { GettingStarted, useOnboardingDismissed } from '../../../src/components/GettingStarted';
+import { InstallHint } from '../../../src/components/InstallHint';
 import { AnimatedMoney, FadeIn } from '../../../src/components/motion';
 import {
   Avatar,
@@ -21,7 +22,7 @@ import {
 import { formatMoney } from '../../../src/core/money';
 import { useAuth } from '../../../src/data/auth';
 import { GroupSummary, useGroups } from '../../../src/data/groups';
-import { colors, gradients, radius, spacing, typography } from '../../../src/theme';
+import { colors, fonts, radius, spacing, typography } from '../../../src/theme';
 
 export default function GroupsScreen() {
   const router = useRouter();
@@ -29,8 +30,6 @@ export default function GroupsScreen() {
   const { summaries, totals, expenseCount, loading, error, refresh } = useGroups();
   const [refreshing, setRefreshing] = React.useState(false);
   const { dismissed, dismiss } = useOnboardingDismissed(userId);
-
-  // Everything the checklist needs, derived from data already on screen.
   const onboardingFacts = React.useMemo(
     () => ({
       hasGroup: summaries.length > 0,
@@ -48,9 +47,7 @@ export default function GroupsScreen() {
   };
 
   const net = totals.owedToYouCents - totals.youOweCents;
-  const heroGradient =
-    net === 0 ? gradients.brand : net > 0 ? gradients.positive : gradients.negative;
-
+  const heroTone = net === 0 ? 'brand' : net > 0 ? 'positive' : 'negative';
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <FlatList
@@ -75,8 +72,9 @@ export default function GroupsScreen() {
               </Pressable>
             </View>
 
-            {/* Balances first: the whole point of opening the app. */}
-            <GradientCard colors={heroGradient} style={styles.hero}>
+            <InstallHint />
+
+            <GradientCard tone={heroTone} style={styles.hero}>
               <Text style={styles.heroLabel}>
                 {net === 0 ? 'ALL SETTLED UP' : net > 0 ? 'YOU ARE OWED' : 'YOU OWE'}
               </Text>
@@ -164,7 +162,6 @@ export default function GroupsScreen() {
 function GroupCard({ summary }: { summary: GroupSummary }) {
   const router = useRouter();
   const { group, memberCount, netCents, role, members } = summary;
-
   return (
     <Card style={styles.card} onPress={() => router.push(`/(app)/groups/${group.id}`)}>
       <View style={styles.cardTop}>
@@ -212,22 +209,20 @@ function greeting(): string {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   list: { padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.md },
-
   header: { gap: spacing.lg, marginBottom: spacing.xs },
   topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   greeting: { ...typography.caption },
   name: { ...typography.title, fontSize: 25 },
-
   hero: { gap: 2 },
   heroLabel: {
     fontSize: 11.5,
-    fontWeight: '800',
+    fontFamily: fonts.bold,
     letterSpacing: 1,
     color: 'rgba(255,255,255,0.82)',
   },
   heroAmount: {
     fontSize: 42,
-    fontWeight: '800',
+    fontFamily: fonts.bold,
     letterSpacing: -1.2,
     color: '#FFFFFF',
     fontVariant: ['tabular-nums'],
@@ -235,8 +230,7 @@ const styles = StyleSheet.create({
   heroHint: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginTop: 4 },
   heroSplit: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.sm },
   heroSplitItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  heroSplitText: { fontSize: 13, fontWeight: '600', color: 'rgba(255,255,255,0.92)' },
-
+  heroSplitText: { fontSize: 13, fontFamily: fonts.semibold, color: 'rgba(255,255,255,0.92)' },
   quickActions: { flexDirection: 'row', gap: spacing.md },
   quickAction: {
     flex: 1,
@@ -251,9 +245,7 @@ const styles = StyleSheet.create({
   },
   quickIcon: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   quickText: { ...typography.bodyStrong, fontSize: 14, flexShrink: 1 },
-
   sectionLabel: { ...typography.label },
-
   card: { gap: spacing.md },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   cardTitleBlock: { flex: 1, gap: 2 },

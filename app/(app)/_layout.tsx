@@ -25,6 +25,12 @@ export default function AppLayout() {
         name="groups/join"
         options={{ presentation: 'modal', title: 'Join a group' }}
       />
+      {/* The universal entry point. No title — the screen asks its own
+          question in 34pt, and a nav bar saying "Add" would just repeat it. */}
+      <Stack.Screen
+        name="add"
+        options={{ presentation: 'modal', headerShown: false }}
+      />
       <Stack.Screen
         name="expense/new"
         options={{ presentation: 'modal', title: 'Add expense' }}
@@ -32,6 +38,14 @@ export default function AppLayout() {
       <Stack.Screen
         name="subscription/new"
         options={{ presentation: 'modal', title: 'New subscription' }}
+      />
+      <Stack.Screen
+        name="event/new"
+        options={{ presentation: 'modal', title: 'New event' }}
+      />
+      <Stack.Screen
+        name="chores/assign"
+        options={{ presentation: 'modal', title: 'Assign chores' }}
       />
       <Stack.Screen name="settle" options={{ presentation: 'modal', title: 'Settle up' }} />
       <Stack.Screen

@@ -1,93 +1,108 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Tabs, useLocalSearchParams } from 'expo-router';
 import React from 'react';
-import { Platform } from 'react-native';
+import { ColorValue, Platform, StyleSheet, View } from 'react-native';
 
 import { GroupProvider } from '../../../../src/data/groupContext';
-import { colors } from '../../../../src/theme';
+import { colors, fonts, gradients } from '../../../../src/theme';
 
-/**
- * One provider above the tabs: every tab reads the same live snapshot, so
- * adding an expense updates the ledger, the balances and the insights in the
- * same frame.
- */
 export default function GroupLayout() {
   const { id } = useLocalSearchParams<{ id: string }>();
-
   return (
     <GroupProvider groupId={id}>
       <Tabs
         screenOptions={{
           headerShown: false,
-          tabBarActiveTintColor: colors.primary,
+          tabBarActiveTintColor: colors.text,
           tabBarInactiveTintColor: colors.textFaint,
-          tabBarStyle: {
-            backgroundColor: colors.surface,
-            borderTopColor: colors.border,
-            borderTopWidth: 1,
-            height: Platform.OS === 'ios' ? 86 : 62,
-            paddingTop: 6,
-          },
-          tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
+          tabBarStyle: styles.bar,
+          tabBarItemStyle: styles.item,
+          tabBarLabelStyle: styles.label,
           sceneStyle: { backgroundColor: colors.background },
         }}
       >
         <Tabs.Screen
           name="index"
           options={{
-            title: 'Home',
-            tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons name={focused ? 'home' : 'home-outline'} size={size} color={color} />
+            title: 'Today',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon name={focused ? 'flash' : 'flash-outline'} color={color} focused={focused} />
             ),
           }}
         />
         <Tabs.Screen
-          name="ledger"
+          name="explore"
           options={{
-            title: 'Ledger',
-            tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons name={focused ? 'receipt' : 'receipt-outline'} size={size} color={color} />
+            title: 'Explore',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon name={focused ? 'grid' : 'grid-outline'} color={color} focused={focused} />
             ),
           }}
         />
         <Tabs.Screen
-          name="balances"
+          name="you"
           options={{
-            title: 'Balances',
-            tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons
-                name={focused ? 'swap-horizontal' : 'swap-horizontal-outline'}
-                size={size}
+            title: 'You',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon
+                name={focused ? 'person' : 'person-outline'}
                 color={color}
+                focused={focused}
               />
             ),
           }}
         />
-        <Tabs.Screen
-          name="insights"
-          options={{
-            title: 'Insights',
-            tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons
-                name={focused ? 'stats-chart' : 'stats-chart-outline'}
-                size={size}
-                color={color}
-              />
-            ),
-          }}
-        />
-        {/* Reachable from the Ledger header; six tabs is too many. */}
+
+        <Tabs.Screen name="ledger" options={{ href: null }} />
+        <Tabs.Screen name="balances" options={{ href: null }} />
+        <Tabs.Screen name="calendar" options={{ href: null }} />
+        <Tabs.Screen name="house" options={{ href: null }} />
+        <Tabs.Screen name="insights" options={{ href: null }} />
         <Tabs.Screen name="subscriptions" options={{ href: null }} />
-        <Tabs.Screen
-          name="house"
-          options={{
-            title: 'House',
-            tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons name={focused ? 'grid' : 'grid-outline'} size={size} color={color} />
-            ),
-          }}
-        />
       </Tabs>
     </GroupProvider>
   );
 }
+
+function TabIcon({
+  name,
+  color,
+  focused,
+}: {
+  name: string;
+  color: ColorValue;
+  focused: boolean;
+}) {
+  return (
+    <View style={styles.icon}>
+      <Ionicons name={name as never} size={23} color={color as string} />
+      {focused ? (
+        <LinearGradient
+          colors={[gradients.brand[0], gradients.brand[1]]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.dot}
+        />
+      ) : (
+        <View style={styles.dotPlaceholder} />
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  bar: {
+    backgroundColor: colors.background,
+    borderTopWidth: 0,
+    height: Platform.OS === 'ios' ? 88 : 68,
+    paddingTop: 12,
+    paddingHorizontal: 12,
+    elevation: 0,
+  },
+  item: { paddingTop: 2 },
+  label: { fontFamily: fonts.medium, fontSize: 11, marginTop: 3 },
+  icon: { alignItems: 'center', gap: 5 },
+  dot: { width: 5, height: 5, borderRadius: 3 },
+  dotPlaceholder: { width: 5, height: 5 },
+});

@@ -1,9 +1,3 @@
-/**
- * Environment access. Expo inlines `process.env.EXPO_PUBLIC_*` at build time,
- * so these must be referenced as full static property paths — destructuring
- * `process.env` would leave them undefined in a release bundle.
- */
-
 import { normalizeSupabaseUrl, supabaseUrlExtraPath } from '../core/supabaseUrl';
 
 export type OcrProviderName = 'google' | 'ocrspace' | 'none';
@@ -36,7 +30,6 @@ export const env = {
   ocrSpaceApiKey: OCRSPACE_API_KEY,
 };
 
-/** True once real Supabase credentials are present in .env. */
 export const isSupabaseConfigured =
   !isPlaceholder(env.supabaseUrl) && !isPlaceholder(env.supabaseAnonKey);
 

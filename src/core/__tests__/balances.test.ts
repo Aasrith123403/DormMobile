@@ -9,7 +9,6 @@ import {
 } from '../balances';
 import { evenSplit } from '../splits';
 
-/** Builds an expense whose splits are an even division across `among`. */
 const expense = (paidBy: string, amountCents: number, among: string[]) => ({
   paidBy,
   amountCents,
@@ -62,7 +61,6 @@ describe('computeBalances', () => {
 
     const before = computeBalances(base);
     expect(netOf(before, 'ben')).toBe(-1000);
-
     const after = computeBalances({
       ...base,
       settlements: [{ fromUser: 'ben', toUser: 'ana', amountCents: 1000 }],
@@ -136,7 +134,6 @@ describe('minimizeTransfers', () => {
   });
 
   it('collapses a three-way circle into a single payment', () => {
-    // ana -> ben $10, ben -> cass $10, cass -> ana $10 nets out entirely.
     const balances = computeBalances({
       memberIds: ['ana', 'ben', 'cass'],
       expenses: [
@@ -151,7 +148,6 @@ describe('minimizeTransfers', () => {
   });
 
   it('routes a chain of debts into one direct payment', () => {
-    // ben owes ana $10; cass owes ben $10 -> cass should just pay ana.
     const balances: MemberBalance[] = [
       { userId: 'ana', netCents: 1000, paidCents: 0, owedCents: 0 },
       { userId: 'ben', netCents: 0, paidCents: 0, owedCents: 0 },
@@ -194,7 +190,6 @@ describe('minimizeTransfers', () => {
     };
 
     const { balances, transfers } = settleUpPlan(input);
-
     const applied = new Map(balances.map((b) => [b.userId, b.netCents]));
     for (const t of transfers) {
       applied.set(t.fromUser, applied.get(t.fromUser)! + t.amountCents);
@@ -250,9 +245,7 @@ describe('minimizeTransfers', () => {
       });
 
       const { balances, transfers } = settleUpPlan({ memberIds, expenses, settlements: [] });
-
       expect(balances.reduce((sum, b) => sum + b.netCents, 0)).toBe(0);
-
       const applied = new Map(balances.map((b) => [b.userId, b.netCents]));
       for (const t of transfers) {
         applied.set(t.fromUser, applied.get(t.fromUser)! + t.amountCents);
@@ -282,7 +275,6 @@ describe('expenses paid by several people', () => {
       settlements: [],
     });
 
-    // Ana put in 4000 and consumed 3000; Ben put in 2000 and consumed 3000.
     expect(netOf(balances, 'ana')).toBe(1000);
     expect(netOf(balances, 'ben')).toBe(-1000);
   });
@@ -382,11 +374,6 @@ describe('payersOf', () => {
 });
 
 describe('paying separately', () => {
-  /**
-   * Everyone covering their own share: each person's split equals what they
-   * put in. The expense must net to exactly zero for everyone, which is what
-   * lets the UI promise "nobody owes anybody".
-   */
   const separately = (contributions: [string, number][]) => ({
     paidBy: contributions[0][0],
     amountCents: contributions.reduce((sum, [, cents]) => sum + cents, 0),
@@ -395,7 +382,6 @@ describe('paying separately', () => {
   });
 
   it('leaves nobody owing anybody', () => {
-    // Aasrith paid 50, Jay paid 60.
     const balances = computeBalances({
       memberIds: ['aasrith', 'jay'],
       expenses: [separately([['aasrith', 5000], ['jay', 6000]])],
@@ -442,9 +428,9 @@ describe('paying separately', () => {
     const balances = computeBalances({
       memberIds: ['aasrith', 'jay'],
       expenses: [
-        // An ordinary split expense that does create a debt...
+
         { paidBy: 'aasrith', amountCents: 2000, splits: evenSplit(2000, ['aasrith', 'jay']) },
-        // ...plus a separately-paid one, which should change nothing.
+
         separately([['aasrith', 5000], ['jay', 6000]]),
       ],
       settlements: [],

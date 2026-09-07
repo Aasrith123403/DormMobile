@@ -53,7 +53,6 @@ describe('summarizeMonth', () => {
     expense(6000, 'ana', ['ana', 'ben'], at(2026, 7, 20), 'groceries'),
   ];
   const june = [expense(3000, 'ana', ['ana', 'ben'], at(2026, 6, 5), 'groceries')];
-
   it('totals only the requested month', () => {
     const summary = summarizeMonth([...july, ...june], '2026-07');
     expect(summary.totalCents).toBe(12_000);
@@ -69,7 +68,6 @@ describe('summarizeMonth', () => {
   it('keeps what someone paid separate from what they consumed', () => {
     const summary = summarizeMonth(july, '2026-07');
     const ana = summary.byPerson.find((p) => p.userId === 'ana')!;
-
     expect(ana.paidCents).toBe(10_000);
     expect(ana.shareCents).toBe(6000);
   });

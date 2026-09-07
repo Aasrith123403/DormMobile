@@ -1,13 +1,3 @@
-/**
- * Recurring-charge date maths. Pure, and deliberately string-based
- * (YYYY-MM-DD) so nothing depends on the device timezone — a subscription due
- * on the 1st must not fire a day early for someone in UTC+13.
- *
- * Month arithmetic clamps to the end of the target month, matching Postgres'
- * `date + interval '1 month'`, so the client-side preview and the
- * `generate_due_subscription_charges` SQL function always agree.
- */
-
 export type IsoDate = string;
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -26,7 +16,6 @@ export function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
-/** Adds whole months, clamping the day to the last day of the target month. */
 export function addMonths(date: IsoDate, months: number): IsoDate {
   const { year, month, day } = parseIsoDate(date);
   const zeroBased = (year * 12 + (month - 1)) + months;
@@ -39,18 +28,12 @@ export function compareIsoDates(a: IsoDate, b: IsoDate): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/** Today in the device's local calendar, as YYYY-MM-DD. */
 export function todayIso(now: Date = new Date()): IsoDate {
   return toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
 }
 
-/** Hard stop so a subscription with a badly wrong date cannot spin forever. */
 export const MAX_CATCHUP_CHARGES = 60;
 
-/**
- * Every charge date that is due on or before `today`, starting at
- * `nextChargeDate`. Empty when nothing is due yet.
- */
 export function dueChargeDates(nextChargeDate: IsoDate, today: IsoDate): IsoDate[] {
   const dates: IsoDate[] = [];
   let cursor = nextChargeDate;
@@ -61,7 +44,6 @@ export function dueChargeDates(nextChargeDate: IsoDate, today: IsoDate): IsoDate
   return dates;
 }
 
-/** The date to store back on the subscription after generating due charges. */
 export function advanceChargeDate(nextChargeDate: IsoDate, today: IsoDate): IsoDate {
   const due = dueChargeDates(nextChargeDate, today);
   return due.length === 0 ? nextChargeDate : addMonths(due[due.length - 1], 1);
@@ -71,7 +53,6 @@ export function isDue(nextChargeDate: IsoDate, today: IsoDate): boolean {
   return compareIsoDates(nextChargeDate, today) <= 0;
 }
 
-/** "in 3 days" / "today" / "2 days late" for the subscription list. */
 export function describeNextCharge(nextChargeDate: IsoDate, today: IsoDate): string {
   const diff = daysBetween(today, nextChargeDate);
   if (diff === 0) return 'Charges today';

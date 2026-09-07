@@ -21,7 +21,6 @@ describe('evenSplit', () => {
   });
 
   it('gives leftover cents to the earliest members', () => {
-    // $10.00 across 3 people = 333.33...; the extra cent goes to the first.
     expect(evenSplit(1000, ['a', 'b', 'c'])).toEqual([
       { userId: 'a', shareCents: 334 },
       { userId: 'b', shareCents: 333 },

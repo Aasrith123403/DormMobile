@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Card, Screen } from '../components/ui';
-import { colors, radius, spacing, typography } from '../theme';
+import { colors, fonts, radius, spacing, typography } from '../theme';
 
 const STEPS = [
   'Create a project at supabase.com.',
@@ -13,10 +13,6 @@ const STEPS = [
   'Restart the dev server: npx expo start -c',
 ];
 
-/**
- * Shown instead of the app when .env is missing credentials — a blank screen
- * and a network error would be a worse first run.
- */
 export default function SetupRequired() {
   return (
     <SafeAreaView style={styles.safe}>
@@ -57,7 +53,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  numberText: { color: colors.primary, fontWeight: '700', fontSize: 13 },
+  numberText: { color: colors.primary, fontFamily: fonts.bold, fontSize: 13 },
   stepText: { ...typography.body, flex: 1, lineHeight: 21 },
   footnote: { ...typography.caption, marginTop: spacing.md },
 });

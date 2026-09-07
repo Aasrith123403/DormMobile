@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -14,12 +14,10 @@ import { AnimatedBar, FadeIn } from './motion';
 import { Card, Tappable } from './ui';
 import { colors, radius, spacing, typography } from '../theme';
 
-/** Dismissal is per account, so a shared device does not hide it for someone new. */
 const dismissKey = (userId: string) => `roomledger.onboarding.dismissed.${userId}`;
 
 export function useOnboardingDismissed(userId: string | null) {
   const [dismissed, setDismissed] = useState<boolean | null>(null);
-
   useEffect(() => {
     let active = true;
     if (!userId) {
@@ -32,7 +30,6 @@ export function useOnboardingDismissed(userId: string | null) {
         if (active) setDismissed(value === '1');
       })
       .catch(() => {
-        // Storage failing should show the tips, not hide them.
         if (active) setDismissed(false);
       });
 
@@ -45,7 +42,6 @@ export function useOnboardingDismissed(userId: string | null) {
     setDismissed(true);
     if (userId) {
       await AsyncStorage.setItem(dismissKey(userId), '1').catch(() => {
-        /* it will simply reappear next launch */
       });
     }
   }, [userId]);
@@ -53,11 +49,6 @@ export function useOnboardingDismissed(userId: string | null) {
   return { dismissed, dismiss };
 }
 
-/**
- * A short checklist for a new account. Every item is derived from real data,
- * so it ticks itself off as the user goes and vanishes once the group is set
- * up — no notifications, no badges, and dismissible at any point.
- */
 export function GettingStarted({
   facts,
   dismissed,
@@ -68,17 +59,12 @@ export function GettingStarted({
   onDismiss: () => void;
 }) {
   const router = useRouter();
-
   if (!shouldShowOnboarding(facts, dismissed)) return null;
-
   const steps = onboardingSteps(facts);
   const progress = onboardingProgress(steps);
-
   const go = (id: string) => {
     if (id === 'group') router.push('/(app)/groups/new');
     else if (id === 'venmo') router.push('/(app)/profile');
-    // "invite" and "expense" both live inside a group, which the user reaches
-    // by opening it — pointing elsewhere would be guesswork.
   };
 
   return (
@@ -106,7 +92,6 @@ export function GettingStarted({
         <View style={styles.steps}>
           {steps.map((step, index) => {
             const actionable = !step.done && (step.id === 'group' || step.id === 'venmo');
-
             return (
               <FadeIn key={step.id} index={index} distance={6}>
                 <Tappable
@@ -145,7 +130,6 @@ const styles = StyleSheet.create({
   headerText: { gap: 1 },
   title: { ...typography.heading },
   subtitle: { ...typography.caption },
-
   steps: { gap: spacing.xs },
   step: {
     flexDirection: 'row',

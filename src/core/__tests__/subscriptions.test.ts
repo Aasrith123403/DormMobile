@@ -80,7 +80,6 @@ describe('advanceChargeDate', () => {
   it('generates exactly one charge per month over a simulated year', () => {
     let nextCharge = '2026-01-15';
     let generated = 0;
-
     for (let month = 0; month < 12; month += 1) {
       const today = addMonths('2026-01-20', month);
       generated += dueChargeDates(nextCharge, today).length;
@@ -114,7 +113,6 @@ describe('date helpers', () => {
   });
 
   it('formats today without timezone drift', () => {
-    // Late-evening local time must still report the local calendar day.
     expect(todayIso(new Date(2026, 6, 28, 23, 59))).toBe('2026-07-28');
     expect(todayIso(new Date(2026, 0, 1, 0, 1))).toBe('2026-01-01');
   });

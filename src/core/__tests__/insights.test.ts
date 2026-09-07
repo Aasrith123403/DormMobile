@@ -37,9 +37,7 @@ describe('computeInsights', () => {
   });
 
   it('separates what someone paid from what they consumed', () => {
-    // Ana pays for everything but only consumes half.
     const result = computeInsights([expense(4000, 'ana', ['ana', 'ben'])], 'ana');
-
     const ana = result.byMember.find((m) => m.userId === 'ana')!;
     expect(ana.paidCents).toBe(4000);
     expect(ana.shareCents).toBe(2000);
@@ -76,7 +74,6 @@ describe('computeInsights', () => {
 
   it('degrades gracefully on an empty ledger', () => {
     const result = computeInsights([], 'ana');
-
     expect(result.totalCents).toBe(0);
     expect(result.averageCents).toBe(0);
     expect(result.largest).toBeNull();
@@ -113,8 +110,7 @@ describe('computeInsights', () => {
 });
 
 describe('filterByRange', () => {
-  const now = new Date(2026, 6, 28); // July 2026, local time
-
+  const now = new Date(2026, 6, 28);
   it('keeps only the current calendar month', () => {
     const expenses = [
       expense(100, 'ana', ['ana'], new Date(2026, 6, 2, 12).toISOString()),

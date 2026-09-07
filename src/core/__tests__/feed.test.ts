@@ -13,6 +13,8 @@ const input = (overrides: Partial<FeedInput> = {}): FeedInput => ({
   statuses: [],
   settlements: [],
   upcoming: [],
+  events: [],
+  pings: [],
   lastMonth: null,
   today: '2026-07-15',
   ...overrides,
@@ -301,12 +303,126 @@ describe('buildFeed', () => {
 
 describe('feedTimeAgo', () => {
   const now = new Date('2026-07-15T12:00:00.000Z');
-
   it('reads naturally at each scale', () => {
     expect(feedTimeAgo('2026-07-15T11:59:40.000Z', now)).toBe('now');
     expect(feedTimeAgo('2026-07-15T11:30:00.000Z', now)).toBe('30m');
     expect(feedTimeAgo('2026-07-15T09:00:00.000Z', now)).toBe('3h');
     expect(feedTimeAgo('2026-07-13T12:00:00.000Z', now)).toBe('2d');
     expect(feedTimeAgo('2026-07-01T12:00:00.000Z', now)).toBe('2w');
+  });
+});
+
+describe('events in the feed', () => {
+  it('mentions something happening today', () => {
+    const feed = buildFeed(
+      input({
+        events: [
+          { id: 'v1', title: 'House dinner', date: '2026-07-15', time: '7:00 PM', location: 'Kitchen' },
+        ],
+      })
+    );
+
+    expect(feed[0].kind).toBe('event');
+    expect(feed[0].title).toBe('House dinner today');
+    expect(feed[0].detail).toBe('7:00 PM · Kitchen');
+  });
+
+  it('counts the days for something further out', () => {
+    const feed = buildFeed(
+      input({
+        events: [{ id: 'v1', title: 'Move-out', date: '2026-07-16', time: null, location: null }],
+      })
+    );
+
+    expect(feed[0].title).toBe('Move-out tomorrow');
+    expect(feed[0].detail).toBeNull();
+  });
+
+  it('leaves distant plans to the calendar', () => {
+    const feed = buildFeed(
+      input({
+        events: [{ id: 'v1', title: 'Party', date: '2026-08-01', time: null, location: null }],
+      })
+    );
+
+    expect(feed).toEqual([]);
+  });
+
+  it('does not look backwards', () => {
+    const feed = buildFeed(
+      input({
+        events: [{ id: 'v1', title: 'Yesterday', date: '2026-07-14', time: null, location: null }],
+      })
+    );
+
+    expect(feed).toEqual([]);
+  });
+});
+
+describe('pings in the feed', () => {
+  it('shows an answerable ping as actionable and leading', () => {
+    const feed = buildFeed(
+      input({
+        expenses: [
+          { id: 'e1', description: 'Pizza', amountCents: 2400, paidBy: 'ben', createdAt: hoursAgo(1) },
+        ],
+        pings: [
+          {
+            id: 'p1',
+            title: 'Ben wants you',
+            note: 'kitchen',
+            createdAt: hoursAgo(0),
+            fromUser: 'ben',
+            canRespond: true,
+            responseLabel: null,
+          },
+        ],
+      })
+    );
+
+    expect(feed[0].kind).toBe('ping');
+    expect(feed[0].actionable).toBe(true);
+    expect(feed[0].detail).toBe('kitchen');
+  });
+
+  it('shows an answered ping as history, with the answer', () => {
+    const feed = buildFeed(
+      input({
+        pings: [
+          {
+            id: 'p1',
+            title: 'You asked everyone to come',
+            note: null,
+            createdAt: hoursAgo(1),
+            fromUser: 'ana',
+            canRespond: false,
+            responseLabel: 'On my way',
+          },
+        ],
+      })
+    );
+
+    expect(feed[0].actionable).toBe(false);
+    expect(feed[0].detail).toBe('On my way');
+  });
+
+  it('prefers the note over the response when both exist', () => {
+    const feed = buildFeed(
+      input({
+        pings: [
+          {
+            id: 'p1',
+            title: 'Ben wants you',
+            note: 'bring the charger',
+            createdAt: hoursAgo(1),
+            fromUser: 'ben',
+            canRespond: false,
+            responseLabel: 'Can’t',
+          },
+        ],
+      })
+    );
+
+    expect(feed[0].detail).toBe('bring the charger');
   });
 });

@@ -34,7 +34,6 @@ describe('formatVenmoAmount', () => {
 describe('buildVenmoLinks', () => {
   it('builds an app link with recipient, amount and private audience', () => {
     const { appUrl } = buildVenmoLinks({ recipient: '@ana-lopez', amountCents: 1750 });
-
     expect(appUrl.startsWith('venmo://paycharge?')).toBe(true);
     expect(appUrl).toContain('txn=pay');
     expect(appUrl).toContain('recipients=ana-lopez');

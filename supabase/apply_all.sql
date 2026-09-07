@@ -1,9 +1,9 @@
 -- ============================================================================
 -- RoomLedger — everything after 0001, in one paste.
 --
--- This file is 0002, 0003, 0004 and 0005 concatenated in apply order. It is
+-- This file is 0002 through 0008 concatenated in apply order. It is
 -- generated, not hand-edited: regenerate with
---   cat supabase/migrations/000{2,3,4,5}_*.sql > supabase/apply_all.sql
+--   cat supabase/migrations/000{2,3,4,5,6,7,8}_*.sql > supabase/apply_all.sql
 --
 -- Every statement inside is idempotent, so running this more than once is
 -- safe. Paste the whole thing into the Supabase SQL editor and press Run.
@@ -13,6 +13,9 @@
 --   0003  expenses paid by more than one person (expense_payers)
 --   0004  one-query home screen (get_my_group_summaries)
 --   0005  supplies "we're out", chores, presence, repeating expenses
+--   0006  self-declared place + "come here" pings
+--   0007  chore assignments + the shared calendar (events)
+--   0008  heartbeat, so the free project is never paused for inactivity
 --
 -- ONE DESTRUCTIVE CHANGE: 0005 drops supply_items.current_turn_user_id.
 -- Whose turn it is is now derived from who bought last plus who has bought
@@ -788,5 +791,472 @@ begin
   end loop;
 end
 $$;
+
+notify pgrst, 'reload schema';
+
+
+-- ####################################################################
+-- BEGIN 0006_presence_ping.sql
+-- ####################################################################
+
+-- ============================================================================
+-- RoomLedger — self-declared place + "come here" ping
+--
+-- Apply after 0005_household.sql. Safe to re-run.
+--
+-- There is no location data here in any technical sense. `place` is a short
+-- label the member picks from a fixed list and can clear at any time; the app
+-- never reads GPS, never runs in the background, and never stores a
+-- coordinate. It is a status word that happens to be about where someone is,
+-- with exactly the same privacy properties as "asleep".
+--
+-- Pings are deliberately ephemeral: the app only ever reads recent ones, and
+-- the optional cron job at the bottom deletes them outright.
+-- ============================================================================
+
+-- ============================================================================
+-- 1. SELF-DECLARED PLACE
+--    Extends the existing group_status (specified as `member_status`; that
+--    table already is member status in all but name).
+-- ============================================================================
+
+alter table public.group_status
+  add column if not exists place text
+    check (place is null or length(btrim(place)) between 1 and 40);
+
+-- ============================================================================
+-- 2. PINGS
+-- ============================================================================
+
+create table if not exists public.pings (
+  id           uuid primary key default gen_random_uuid(),
+  group_id     uuid not null references public.groups (id) on delete cascade,
+  from_user    uuid not null references public.users (id) on delete cascade,
+  -- Null means the whole group.
+  to_user      uuid references public.users (id) on delete cascade,
+  note         text check (note is null or length(btrim(note)) <= 120),
+  created_at   timestamptz not null default now(),
+  response     text check (response is null or response in ('omw', 'soon', 'cant')),
+  responded_at timestamptz,
+  -- A response without a time, or vice versa, would be a half-written row.
+  check ((response is null) = (responded_at is null))
+);
+
+create index if not exists pings_group_recent_idx
+  on public.pings (group_id, created_at desc);
+
+alter table public.pings enable row level security;
+alter table public.pings replica identity full;
+
+drop policy if exists pings_select on public.pings;
+create policy pings_select on public.pings
+  for select to authenticated
+  using (public.is_group_member(group_id));
+
+-- You can only send as yourself, and only into a group you belong to.
+drop policy if exists pings_insert on public.pings;
+create policy pings_insert on public.pings
+  for insert to authenticated
+  with check (public.is_group_member(group_id) and from_user = auth.uid());
+
+-- The sender can take a ping back; nobody else can delete one.
+drop policy if exists pings_delete on public.pings;
+create policy pings_delete on public.pings
+  for delete to authenticated
+  using (public.is_group_member(group_id) and from_user = auth.uid());
+
+/**
+ * One tap: nudge one person, or the whole group when p_to_user is null.
+ */
+create or replace function public.send_ping(
+  p_group_id uuid,
+  p_to_user  uuid default null,
+  p_note     text default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  new_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'not_authenticated';
+  end if;
+  if not public.is_group_member(p_group_id) then
+    raise exception 'not_a_group_member';
+  end if;
+
+  -- Pinging someone outside the group would leak the group's existence.
+  if p_to_user is not null and not exists (
+    select 1 from public.memberships m
+    where m.group_id = p_group_id and m.user_id = p_to_user
+  ) then
+    raise exception 'recipient_not_in_group';
+  end if;
+
+  insert into public.pings (group_id, from_user, to_user, note)
+  values (p_group_id, auth.uid(), p_to_user, nullif(btrim(p_note), ''))
+  returning id into new_id;
+
+  return new_id;
+end;
+$$;
+
+/**
+ * One tap back: "on my way", "soon", or "can't".
+ *
+ * Only the addressee may answer a direct ping. A group-wide ping can be
+ * answered by any member, and holds a single answer — the first reply stands,
+ * which is all "is anyone coming?" actually needs.
+ */
+create or replace function public.respond_to_ping(p_ping_id uuid, p_response text)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  ping public.pings;
+begin
+  if p_response not in ('omw', 'soon', 'cant') then
+    raise exception 'invalid_response';
+  end if;
+
+  select * into ping from public.pings where id = p_ping_id;
+  if ping is null then
+    raise exception 'ping_not_found';
+  end if;
+  if not public.is_group_member(ping.group_id) then
+    raise exception 'not_a_group_member';
+  end if;
+  if ping.to_user is not null and ping.to_user <> auth.uid() then
+    raise exception 'not_your_ping';
+  end if;
+  if ping.from_user = auth.uid() then
+    raise exception 'cannot_answer_your_own_ping';
+  end if;
+
+  update public.pings
+  set response = p_response, responded_at = now()
+  where id = p_ping_id;
+end;
+$$;
+
+revoke all on function public.send_ping(uuid, uuid, text) from public;
+revoke all on function public.respond_to_ping(uuid, text) from public;
+grant execute on function public.send_ping(uuid, uuid, text) to authenticated;
+grant execute on function public.respond_to_ping(uuid, text) to authenticated;
+
+-- ============================================================================
+-- 3. REALTIME
+-- ============================================================================
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'pings'
+  ) then
+    alter publication supabase_realtime add table public.pings;
+  end if;
+end
+$$;
+
+-- ============================================================================
+-- 4. OPTIONAL — actually delete old pings
+--    The app only ever reads recent ones, so this is about not hoarding data
+--    rather than about correctness. Needs pg_cron enabled.
+-- ============================================================================
+
+create or replace function public.prune_old_pings()
+returns integer
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  removed int;
+begin
+  delete from public.pings where created_at < now() - interval '24 hours';
+  get diagnostics removed = row_count;
+  return removed;
+end;
+$$;
+
+revoke all on function public.prune_old_pings() from public;
+
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.unschedule('roomledger-prune-pings')
+    where exists (select 1 from cron.job where jobname = 'roomledger-prune-pings');
+
+    perform cron.schedule(
+      'roomledger-prune-pings',
+      '17 * * * *',
+      $cron$ select public.prune_old_pings(); $cron$
+    );
+  end if;
+end
+$$;
+
+notify pgrst, 'reload schema';
+
+
+-- ####################################################################
+-- BEGIN 0007_chore_assignments_and_events.sql
+-- ####################################################################
+
+-- ============================================================================
+-- RoomLedger — chore assignments + the shared calendar
+--
+-- Apply after 0006_presence_ping.sql, in the Supabase SQL editor.
+-- Safe to re-run: every statement is idempotent.
+--
+-- Two changes, and one reversal of an earlier decision:
+--
+--   1. Chores get a real owner. 0005 derived whose turn it was from history
+--      and stored nothing, which is fair but answers a question nobody asked
+--      out loud — people want to *decide* who does the bathroom and then see
+--      that decision. `assigned_to` is that decision. It stays optional:
+--      leaving it null keeps the derived rotation exactly as it was, so
+--      groups that liked the old behaviour lose nothing.
+--
+--   2. A group calendar. Dates and clock times are stored as `date` and
+--      `time`, not `timestamptz`, on purpose: "dinner at 7" means seven
+--      o'clock where the house is, and a timestamp would quietly become 6 or
+--      8 for anyone whose phone reports a different zone.
+-- ============================================================================
+
+-- ============================================================================
+-- 1. CHORES — an owner you choose, not just a turn we compute
+-- ============================================================================
+
+alter table public.chores
+  add column if not exists assigned_to uuid references public.users (id) on delete set null;
+
+comment on column public.chores.assigned_to is
+  'Explicit owner. Null means fall back to the derived rotation from 0005.';
+
+create index if not exists chores_assigned_idx
+  on public.chores (group_id, assigned_to);
+
+/**
+ * Assign a chore to a member, or pass null to hand it back to the rotation.
+ *
+ * Goes through a function rather than a plain update because the chores RLS
+ * policy checks the *chore's* group, not the assignee's: without this you
+ * could put a housemate's name on a chore in a group they are not in.
+ */
+create or replace function public.assign_chore(p_chore_id uuid, p_user_id uuid default null)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  chore public.chores;
+begin
+  select * into chore from public.chores where id = p_chore_id;
+  if chore is null then
+    raise exception 'chore_not_found';
+  end if;
+  if not public.is_group_member(chore.group_id) then
+    raise exception 'not_a_group_member';
+  end if;
+
+  if p_user_id is not null and not exists (
+    select 1 from public.memberships m
+    where m.group_id = chore.group_id and m.user_id = p_user_id
+  ) then
+    raise exception 'assignee_not_in_group';
+  end if;
+
+  update public.chores set assigned_to = p_user_id where id = chore.id;
+end;
+$$;
+
+revoke all on function public.assign_chore(uuid, uuid) from public;
+grant execute on function public.assign_chore(uuid, uuid) to authenticated;
+
+/**
+ * Assign several chores in one round trip.
+ *
+ * The assign screen hands out every unassigned chore at once ("split them
+ * evenly"), and doing that as N separate updates would let the roster show a
+ * half-finished split if the network dropped between them.
+ *
+ * Takes matched arrays rather than a composite type so the client can send
+ * plain JSON. A null entry in p_user_ids returns that chore to the rotation.
+ */
+create or replace function public.assign_chores(p_chore_ids uuid[], p_user_ids uuid[])
+returns integer
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  i       int;
+  changed int := 0;
+begin
+  if coalesce(array_length(p_chore_ids, 1), 0) <> coalesce(array_length(p_user_ids, 1), 0) then
+    raise exception 'length_mismatch';
+  end if;
+
+  for i in 1 .. coalesce(array_length(p_chore_ids, 1), 0) loop
+    perform public.assign_chore(p_chore_ids[i], p_user_ids[i]);
+    changed := changed + 1;
+  end loop;
+
+  return changed;
+end;
+$$;
+
+revoke all on function public.assign_chores(uuid[], uuid[]) from public;
+grant execute on function public.assign_chores(uuid[], uuid[]) to authenticated;
+
+-- ============================================================================
+-- 2. EVENTS — the shared calendar
+-- ============================================================================
+
+create table if not exists public.events (
+  id         uuid primary key default gen_random_uuid(),
+  group_id   uuid not null references public.groups (id) on delete cascade,
+  title      text not null check (length(btrim(title)) between 1 and 80),
+  -- Local wall-clock, deliberately. See the header note.
+  event_date date not null,
+  -- Null start_time means an all-day entry ("move-out day").
+  start_time time,
+  end_time   time,
+  location   text check (location is null or length(location) <= 80),
+  note       text check (note is null or length(note) <= 280),
+  created_by uuid references public.users (id) on delete set null,
+  created_at timestamptz not null default now(),
+
+  -- An event that ends before it starts is a typo, not a plan.
+  constraint events_time_order check (
+    start_time is null or end_time is null or end_time > start_time
+  ),
+  -- An end time without a start has nothing to end.
+  constraint events_end_needs_start check (end_time is null or start_time is not null)
+);
+
+create index if not exists events_group_date_idx on public.events (group_id, event_date);
+
+alter table public.events enable row level security;
+alter table public.events replica identity full;
+
+drop policy if exists events_select on public.events;
+create policy events_select on public.events
+  for select to authenticated
+  using (public.is_group_member(group_id));
+
+drop policy if exists events_insert on public.events;
+create policy events_insert on public.events
+  for insert to authenticated
+  with check (public.is_group_member(group_id) and created_by = auth.uid());
+
+-- Anyone in the house can fix a time or a place: a shared calendar that only
+-- its author can correct is a calendar people stop trusting.
+drop policy if exists events_update on public.events;
+create policy events_update on public.events
+  for update to authenticated
+  using (public.is_group_member(group_id))
+  with check (public.is_group_member(group_id));
+
+-- Deleting is narrower than editing — removing something from everyone's
+-- calendar is the one action here that loses information.
+drop policy if exists events_delete on public.events;
+create policy events_delete on public.events
+  for delete to authenticated
+  using (created_by = auth.uid() or public.is_group_owner(group_id));
+
+-- ============================================================================
+-- 3. REALTIME
+-- ============================================================================
+
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['events']
+  loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end
+$$;
+
+notify pgrst, 'reload schema';
+
+
+-- ####################################################################
+-- BEGIN 0008_keepalive.sql
+-- ####################################################################
+
+-- ============================================================================
+-- RoomLedger — keeping a free project awake
+--
+-- Apply after 0007_chore_assignments_and_events.sql.
+-- Safe to re-run: every statement is idempotent.
+--
+-- Supabase pauses Free Plan projects after 7 days of low database activity,
+-- and a paused project is simply unreachable until somebody restores it by
+-- hand from the dashboard. No data is lost, but the app is down, and nobody
+-- finds out until they open it.
+--
+-- The inactivity timer resets on *any* database activity, so the fix is a
+-- scheduled write twice a week. That is what this table and function exist
+-- for, and .github/workflows/keepalive.yml is what calls it.
+--
+-- Security shape, deliberately:
+--   - The table has RLS on and NO policies, so it is completely unreachable
+--     through the API. Not readable, not writable, by anyone.
+--   - The only way to touch it is the SECURITY DEFINER function below, which
+--     takes no arguments, returns nothing, and can only ever set one
+--     timestamp on one row. Granting it to `anon` therefore adds no way to
+--     read, infer or damage anything — the worst an abuser achieves is
+--     keeping the project awake, which is the point.
+-- ============================================================================
+
+create table if not exists public.heartbeat (
+  -- The check plus the primary key make a second row impossible.
+  id        smallint primary key default 1 check (id = 1),
+  last_seen timestamptz not null default now()
+);
+
+insert into public.heartbeat (id) values (1) on conflict (id) do nothing;
+
+alter table public.heartbeat enable row level security;
+
+-- Any policy that may exist from an earlier run is removed: this table is
+-- meant to have none at all.
+drop policy if exists heartbeat_all on public.heartbeat;
+
+/**
+ * One timestamp write — enough database activity to reset the pause timer.
+ *
+ * Returns void rather than the row so it cannot be used as an oracle for
+ * whether or when anyone last touched the project.
+ */
+create or replace function public.record_heartbeat()
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  update public.heartbeat set last_seen = now() where id = 1;
+end;
+$$;
+
+revoke all on function public.record_heartbeat() from public;
+grant execute on function public.record_heartbeat() to anon, authenticated;
 
 notify pgrst, 'reload schema';

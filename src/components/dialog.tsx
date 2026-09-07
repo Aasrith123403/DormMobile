@@ -2,20 +2,7 @@ import React, { useCallback, useSyncExternalStore } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { PopIn } from './motion';
-import { colors, radius, shadow, spacing, typography } from '../theme';
-
-/**
- * Cross-platform dialogs.
- *
- * React Native Web stubs `Alert.alert` out entirely — the implementation is
- * `static alert() {}` — so every confirmation built on it silently does
- * nothing in a browser. This renders a real Modal instead, which behaves the
- * same on web and native, so a confirm step can never quietly disappear on
- * one platform.
- *
- * The API is imperative on purpose: these are called from async handlers
- * (`if (await confirm(...))`), not from render.
- */
+import { colors, fonts, radius, shadow, spacing, typography } from '../theme';
 
 export type DialogActionStyle = 'default' | 'cancel' | 'destructive';
 
@@ -48,7 +35,6 @@ function getCurrent(): DialogRequest | null {
   return queue[0] ?? null;
 }
 
-/** Generic form: resolves with the chosen action's value, or null if dismissed. */
 export function showDialog(options: {
   title: string;
   message?: string;
@@ -93,7 +79,6 @@ export function notify(options: {
   }).then(() => undefined);
 }
 
-/** A short list of choices, e.g. take a photo vs pick from the library. */
 export function choose(options: {
   title: string;
   message?: string;
@@ -113,34 +98,29 @@ export function choose(options: {
 function resolveCurrent(value: string | null): void {
   const current = queue[0];
   if (!current) return;
-
   queue = queue.slice(1);
   emit();
   current.resolve(value);
 }
 
-/** Mount once, near the root, above everything that might ask a question. */
 export function DialogHost() {
   const request = useSyncExternalStore(subscribe, getCurrent, getCurrent);
-
   const dismiss = useCallback(() => {
     const cancel = queue[0]?.actions.find((action) => action.style === 'cancel');
     resolveCurrent(cancel ? cancel.value : null);
   }, []);
 
   if (!request) return null;
-
   return (
     <Modal
       transparent
       visible
       animationType="fade"
       onRequestClose={dismiss}
-      // Web needs an explicit dismiss affordance; native gets the back button.
+
       accessibilityViewIsModal
     >
       <Pressable style={styles.backdrop} onPress={dismiss}>
-        {/* Swallow taps inside the card so it does not dismiss itself. */}
         <PopIn style={styles.cardWrap}>
           <Pressable style={[styles.card, shadow]} onPress={() => {}}>
           <Text style={styles.title}>{request.title}</Text>
@@ -210,7 +190,7 @@ const styles = StyleSheet.create({
   actionCancel: { backgroundColor: colors.surface, borderColor: colors.border },
   actionDestructive: { backgroundColor: colors.negativeSoft, borderColor: colors.negativeSoft },
   actionPressed: { opacity: 0.75 },
-  actionText: { fontSize: 16, fontWeight: '600', color: colors.textInverse },
+  actionText: { fontSize: 16, fontFamily: fonts.semibold, color: colors.textInverse },
   actionTextCancel: { color: colors.text },
   actionTextDestructive: { color: colors.negative },
 });

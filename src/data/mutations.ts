@@ -2,14 +2,13 @@ import { SplitLine, sumShares } from '../core/splits';
 import { fromCents } from '../core/money';
 import type {
   ChoreRow,
+  EventRow,
   ExpenseRow,
   SettlementRow,
   SubscriptionRow,
   SupplyItemRow,
 } from '../lib/database.types';
 import { supabase } from '../lib/supabase';
-
-/* ------------------------------------------------------------- expenses -- */
 
 export interface NewExpense {
   groupId: string;
@@ -18,19 +17,12 @@ export interface NewExpense {
   description: string;
   amountCents: number;
   splits: SplitLine[];
-  /** Storage object path, e.g. "<group_id>/<uuid>.jpg". */
   receiptPath?: string | null;
   category?: string | null;
-  /**
-   * Set only when several people chipped in; their amounts must sum to the
-   * total. A single payer just uses `paidBy`.
-   */
   payers?: { userId: string; paidCents: number }[] | null;
-  /** Mark this expense as re-posting itself every month. */
   repeatMonthly?: boolean;
 }
 
-/** Warn once per session, not once per save — the message never changes. */
 const warned = new Set<string>();
 function warnOnce(key: string, message: string): void {
   if (warned.has(key)) return;
@@ -38,7 +30,6 @@ function warnOnce(key: string, message: string): void {
   console.warn(message);
 }
 
-/** Same clamping rule Postgres uses for `date + interval '1 month'`. */
 function addOneMonth(from: Date): string {
   const year = from.getFullYear();
   const month = from.getMonth();
@@ -48,11 +39,6 @@ function addOneMonth(from: Date): string {
   return shifted.toISOString().slice(0, 10);
 }
 
-/**
- * True when PostgREST reports a column the server does not have — i.e.
- * migration 0002 has not been applied yet. Categories are optional metadata,
- * so an expense should still save without one rather than fail outright.
- */
 function isUnknownColumnError(error: unknown): boolean {
   const code = (error as { code?: string })?.code;
   const message = (error as { message?: string })?.message ?? '';
@@ -64,20 +50,12 @@ function isUnknownColumnError(error: unknown): boolean {
   );
 }
 
-/**
- * Writes the expense and one split row per included member.
- *
- * Postgres has no client-visible transaction here, so if the split insert
- * fails we delete the orphaned expense rather than leave a row that would
- * skew every balance in the group.
- */
 export async function addExpense(input: NewExpense): Promise<ExpenseRow> {
   if (input.splits.length === 0) throw new Error('no_split_members');
   if (sumShares(input.splits) !== input.amountCents) {
     throw new Error('Split shares must add up to the expense total.');
   }
 
-  // Required columns, present since 0001.
   const row = {
     group_id: input.groupId,
     paid_by: input.paidBy,
@@ -87,15 +65,11 @@ export async function addExpense(input: NewExpense): Promise<ExpenseRow> {
     receipt_url: input.receiptPath ?? null,
   };
 
-  // Everything added by a later migration. If any of it is missing the whole
-  // insert is retried without it, so an un-migrated project still logs
-  // expenses — it just loses the optional metadata.
   const optional = {
     category: input.category ?? null,
     ...(input.repeatMonthly
       ? {
           repeat_interval: 'monthly' as const,
-          // First repeat lands a month from now; today's copy is this row.
           repeat_next_date: addOneMonth(new Date()),
         }
       : {}),
@@ -116,7 +90,6 @@ export async function addExpense(input: NewExpense): Promise<ExpenseRow> {
   }
 
   if (error) throw error;
-
   if (input.payers && input.payers.length > 1) {
     const total = input.payers.reduce((sum, p) => sum + p.paidCents, 0);
     if (total !== input.amountCents) {
@@ -133,8 +106,6 @@ export async function addExpense(input: NewExpense): Promise<ExpenseRow> {
     );
 
     if (payerError) {
-      // Same reasoning as the split rollback below: a half-written expense
-      // would silently skew every balance in the group.
       await supabase.from('expenses').delete().eq('id', (expense as ExpenseRow).id);
       throw payerError;
     }
@@ -157,12 +128,9 @@ export async function addExpense(input: NewExpense): Promise<ExpenseRow> {
 }
 
 export async function deleteExpense(expenseId: string): Promise<void> {
-  // splits cascade with the expense.
   const { error } = await supabase.from('expenses').delete().eq('id', expenseId);
   if (error) throw error;
 }
-
-/* ---------------------------------------------------------- settlements -- */
 
 export async function recordSettlement(input: {
   groupId: string;
@@ -187,8 +155,6 @@ export async function recordSettlement(input: {
   return data as SettlementRow;
 }
 
-/* -------------------------------------------------------- subscriptions -- */
-
 export async function addSubscription(input: {
   groupId: string;
   name: string;
@@ -199,7 +165,6 @@ export async function addSubscription(input: {
   category?: string | null;
 }): Promise<SubscriptionRow> {
   if (input.memberIds.length === 0) throw new Error('no_split_members');
-
   const row = {
     group_id: input.groupId,
     name: input.name.trim(),
@@ -223,7 +188,6 @@ export async function addSubscription(input: {
   }
 
   if (error) throw error;
-
   const { error: memberError } = await supabase.from('subscription_members').insert(
     input.memberIds.map((userId) => ({
       subscription_id: (subscription as SubscriptionRow).id,
@@ -249,8 +213,6 @@ export async function deleteSubscription(subscriptionId: string): Promise<void> 
   if (error) throw error;
 }
 
-/** Generates any charges that came due while the app was closed. */
-/** Posts any repeating expenses that came due while the app was closed. */
 export async function catchUpRepeatingExpenses(groupId: string): Promise<number> {
   const { data, error } = await supabase.rpc('generate_due_repeating_expenses', {
     p_group_id: groupId,
@@ -267,8 +229,6 @@ export async function catchUpSubscriptions(groupId: string): Promise<number> {
   return (data as unknown as number) ?? 0;
 }
 
-/* -------------------------------------------------------------- supplies -- */
-
 export async function addSupplyItem(input: {
   groupId: string;
   name: string;
@@ -283,7 +243,6 @@ export async function addSupplyItem(input: {
   return data as SupplyItemRow;
 }
 
-/** One tap: flag a staple as out (or un-flag it). */
 export async function markSupplyNeeded(itemId: string, needed = true): Promise<void> {
   const { error } = await supabase.rpc('mark_supply_needed', {
     p_item_id: itemId,
@@ -292,11 +251,6 @@ export async function markSupplyNeeded(itemId: string, needed = true): Promise<v
   if (error) throw error;
 }
 
-/**
- * One tap: logs the purchase as a group expense, clears the "we're out" flag
- * and records the buyer so the rotation advances — all server-side, so the
- * three can never drift apart.
- */
 export async function buySupplyItem(input: {
   itemId: string;
   amountCents: number;
@@ -311,28 +265,56 @@ export async function buySupplyItem(input: {
   return data as unknown as string;
 }
 
-/* ---------------------------------------------------------------- chores -- */
-
 export async function addChore(input: {
   groupId: string;
   name: string;
   frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly';
+  assignedTo?: string | null;
 }): Promise<ChoreRow> {
-  const { data, error } = await supabase
+  const row = {
+    group_id: input.groupId,
+    name: input.name.trim(),
+    frequency: input.frequency,
+  };
+
+  let { data, error } = await supabase
     .from('chores')
-    .insert({
-      group_id: input.groupId,
-      name: input.name.trim(),
-      frequency: input.frequency,
-    })
+    .insert({ ...row, assigned_to: input.assignedTo ?? null })
     .select()
     .single();
+
+  if (error && isUnknownColumnError(error)) {
+    warnOnce(
+      'chore-assign',
+      '[RoomLedger] chores.assigned_to missing — run supabase/apply_all.sql to assign chores to people.'
+    );
+    ({ data, error } = await supabase.from('chores').insert(row).select().single());
+  }
 
   if (error) throw error;
   return data as ChoreRow;
 }
 
-/** One tap: record the completion and move the due date on. */
+export async function assignChore(choreId: string, userId: string | null): Promise<void> {
+  const { error } = await supabase.rpc('assign_chore', {
+    p_chore_id: choreId,
+    p_user_id: userId,
+  });
+  if (error) throw error;
+}
+
+export async function assignChores(
+  pairs: { choreId: string; userId: string | null }[]
+): Promise<number> {
+  if (pairs.length === 0) return 0;
+  const { data, error } = await supabase.rpc('assign_chores', {
+    p_chore_ids: pairs.map((pair) => pair.choreId),
+    p_user_ids: pairs.map((pair) => pair.userId),
+  });
+  if (error) throw error;
+  return (data as unknown as number) ?? 0;
+}
+
 export async function completeChore(choreId: string): Promise<void> {
   const { error } = await supabase.rpc('complete_chore', { p_chore_id: choreId });
   if (error) throw error;
@@ -348,14 +330,75 @@ export async function deleteSupplyItem(itemId: string): Promise<void> {
   if (error) throw error;
 }
 
-/* ---------------------------------------------------------------- status -- */
+export interface NewEvent {
+  groupId: string;
+  createdBy: string;
+  title: string;
+  date: string;
+  startTime?: string | null;
+  endTime?: string | null;
+  location?: string | null;
+  note?: string | null;
+}
+
+export async function addEvent(input: NewEvent): Promise<EventRow> {
+  const { data, error } = await supabase
+    .from('events')
+    .insert({
+      group_id: input.groupId,
+      created_by: input.createdBy,
+      title: input.title.trim(),
+      event_date: input.date,
+      start_time: input.startTime ?? null,
+      end_time: input.startTime ? (input.endTime ?? null) : null,
+      location: input.location?.trim() || null,
+      note: input.note?.trim() || null,
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data as EventRow;
+}
+
+export async function deleteEvent(eventId: string): Promise<void> {
+  const { error } = await supabase.from('events').delete().eq('id', eventId);
+  if (error) throw error;
+}
+
+export async function sendPing(input: {
+  groupId: string;
+  toUser?: string | null;
+  note?: string | null;
+}): Promise<string> {
+  const { data, error } = await supabase.rpc('send_ping', {
+    p_group_id: input.groupId,
+    p_to_user: input.toUser ?? null,
+    p_note: input.note?.trim() || null,
+  });
+  if (error) throw error;
+  return data as unknown as string;
+}
+
+export async function respondToPing(pingId: string, response: string): Promise<void> {
+  const { error } = await supabase.rpc('respond_to_ping', {
+    p_ping_id: pingId,
+    p_response: response,
+  });
+  if (error) throw error;
+}
+
+export async function cancelPing(pingId: string): Promise<void> {
+  const { error } = await supabase.from('pings').delete().eq('id', pingId);
+  if (error) throw error;
+}
 
 export async function setGroupStatus(input: {
   groupId: string;
   userId: string;
   status: string;
   note?: string | null;
-  /** Auto-clear after this many hours, so nobody has to remember to unset it. */
+  place?: string | null;
   clearsInHours?: number | null;
 }): Promise<void> {
   const clearsAt =
@@ -369,6 +412,7 @@ export async function setGroupStatus(input: {
       user_id: input.userId,
       status: input.status,
       note: input.note?.trim() || null,
+      place: input.place ?? null,
       clears_at: clearsAt,
       updated_at: new Date().toISOString(),
     },

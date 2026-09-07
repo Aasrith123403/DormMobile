@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { AppState, Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -12,13 +12,11 @@ import { GroupProvider, useGroup } from '../../src/data/groupContext';
 import { recordSettlement } from '../../src/data/mutations';
 import { friendlyError } from '../../src/lib/supabase';
 import { buildVenmoLinks, settleUpNote, VenmoLinkError } from '../../src/venmo/deepLink';
-import { colors, spacing, typography } from '../../src/theme';
+import { colors, fonts, spacing, typography } from '../../src/theme';
 
 export default function SettleRoute() {
   const { groupId } = useLocalSearchParams<{ groupId: string }>();
-
   if (!groupId) return <ErrorBanner message="Missing group." />;
-
   return (
     <GroupProvider groupId={groupId}>
       <SettleScreen />
@@ -35,22 +33,15 @@ function SettleScreen() {
   const router = useRouter();
   const { userId } = useAuth();
   const { group, groupId, transfers, memberById, displayName, loading, refresh } = useGroup();
-
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Venmo takes over the screen; when the user comes back we ask whether the
-  // payment went through and only then write the settlement row.
   const pendingRef = useRef<PendingPayment | null>(null);
-
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       if (state !== 'active') return;
-
       const pending = pendingRef.current;
       if (!pending) return;
       pendingRef.current = null;
-
       void confirm({
         title: 'Did the payment go through?',
         message: `Record ${formatMoney(pending.transfer.amountCents)} paid to ${pending.recipientName}?`,
@@ -62,16 +53,12 @@ function SettleScreen() {
     });
 
     return () => subscription.remove();
-    // commitSettlement is stable enough for this listener's lifetime; the
-    // values it closes over come from context and are re-read on each call.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId, group?.name]);
 
   const commitSettlement = async (transfer: Transfer) => {
     const key = transferKey(transfer);
     setBusyKey(key);
     setError(null);
-
     try {
       await recordSettlement({
         groupId,
@@ -91,7 +78,6 @@ function SettleScreen() {
   const payWithVenmo = async (transfer: Transfer) => {
     const recipient = memberById.get(transfer.toUser);
     const handle = recipient?.venmo_username ?? '';
-
     if (!handle) {
       void notify({
         title: 'No Venmo username',
@@ -108,10 +94,6 @@ function SettleScreen() {
       });
 
       pendingRef.current = { transfer, recipientName: recipient?.name ?? 'them' };
-
-      // Prefer the installed app, but only where a custom scheme means
-      // anything: react-native-web's canOpenURL always resolves true, so on
-      // web the venmo:// link would open a dead tab instead of the site.
       const canOpenApp =
         Platform.OS !== 'web' && (await Linking.canOpenURL(appUrl).catch(() => false));
       await Linking.openURL(canOpenApp ? appUrl : webUrl);
@@ -123,11 +105,6 @@ function SettleScreen() {
     }
   };
 
-  /**
-   * Move-out settle: records every outstanding transfer at once. The set is
-   * already the minimised one the Balances screen shows, so this is the same
-   * answer, applied — not a different calculation.
-   */
   const settleEveryone = async () => {
     const confirmed = await confirm({
       title: 'Settle everyone up?',
@@ -139,13 +116,9 @@ function SettleScreen() {
     });
 
     if (!confirmed) return;
-
     setBusyKey('__all__');
     setError(null);
-
     try {
-      // Sequential, so a failure part-way leaves a consistent ledger rather
-      // than an unknown subset.
       for (const transfer of transfers) {
         await recordSettlement({
           groupId,
@@ -176,11 +149,9 @@ function SettleScreen() {
   };
 
   if (loading) return <Loading label="Working out who owes what" />;
-
   const mine = transfers.filter((t) => t.fromUser === userId);
   const incoming = transfers.filter((t) => t.toUser === userId);
   const others = transfers.filter((t) => t.fromUser !== userId && t.toUser !== userId);
-
   return (
     <ScrollView contentContainerStyle={styles.content}>
       {error ? <ErrorBanner message={error} /> : null}
@@ -200,7 +171,6 @@ function SettleScreen() {
           {mine.map((transfer) => {
             const recipient = memberById.get(transfer.toUser);
             const key = transferKey(transfer);
-
             return (
               <Card key={key} style={styles.card}>
                 <View style={styles.row}>
@@ -243,7 +213,6 @@ function SettleScreen() {
           {incoming.map((transfer) => {
             const payer = memberById.get(transfer.fromUser);
             const key = transferKey(transfer);
-
             return (
               <Card key={key} style={styles.card}>
                 <View style={styles.row}>
@@ -323,7 +292,7 @@ const styles = StyleSheet.create({
   card: { gap: spacing.sm },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.xs },
   rowBody: { flex: 1, gap: 3 },
-  rowTitle: { ...typography.body, fontWeight: '600' },
+  rowTitle: { ...typography.body, fontFamily: fonts.semibold },
   rowMeta: { ...typography.caption },
   amount: { ...typography.money, fontSize: 18 },
   otherRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 6 },

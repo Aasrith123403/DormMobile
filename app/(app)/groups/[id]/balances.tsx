@@ -8,14 +8,13 @@ import { Avatar, Badge, Button, Card, EmptyState, ErrorBanner } from '../../../.
 import { formatMoney } from '../../../../src/core/money';
 import { useAuth } from '../../../../src/data/auth';
 import { useGroup } from '../../../../src/data/groupContext';
-import { colors, spacing, typography } from '../../../../src/theme';
+import { colors, fonts, spacing, typography } from '../../../../src/theme';
 
 export default function BalancesScreen() {
   const router = useRouter();
   const { userId } = useAuth();
   const { groupId, balances, transfers, members, settlements, error, refresh, displayName } = useGroup();
   const [refreshing, setRefreshing] = useState(false);
-
   const onRefresh = async () => {
     setRefreshing(true);
     await refresh();
@@ -23,10 +22,9 @@ export default function BalancesScreen() {
   };
 
   const allSettled = transfers.length === 0;
-
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-      <GroupHeader />
+      <GroupHeader title="Balances" />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -34,7 +32,6 @@ export default function BalancesScreen() {
       >
         {error ? <ErrorBanner message={error} onRetry={refresh} /> : null}
 
-        {/* Derived on every render from expenses + settlements — never stored. */}
         <Card style={styles.card}>
           <Text style={styles.cardTitle}>Where everyone stands</Text>
 
@@ -44,7 +41,6 @@ export default function BalancesScreen() {
             balances.map((balance) => {
               const member = members.find((m) => m.id === balance.userId);
               const isMe = balance.userId === userId;
-
               return (
                 <View key={balance.userId} style={styles.balanceRow}>
                   <Avatar name={member?.name ?? 'Former member'} id={balance.userId} size={36} />
@@ -81,7 +77,6 @@ export default function BalancesScreen() {
           )}
         </Card>
 
-        {/* The minimum set of payments that clears every balance at once. */}
         <Card style={styles.card}>
           <Text style={styles.cardTitle}>Simplest way to settle</Text>
 
@@ -147,19 +142,16 @@ export default function BalancesScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.md },
-
   card: { gap: spacing.md },
   cardTitle: { ...typography.heading },
   muted: { ...typography.body, color: colors.textMuted },
-
   balanceRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   balanceBody: { flex: 1, gap: 2 },
-  balanceName: { ...typography.body, fontWeight: '600' },
+  balanceName: { ...typography.body, fontFamily: fonts.semibold },
   balanceMeta: { ...typography.caption },
   balanceAmountBlock: { alignItems: 'flex-end' },
   balanceAmount: { ...typography.money },
   balanceDirection: { ...typography.caption, fontSize: 11 },
-
   transferRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -170,10 +162,9 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   transferText: { ...typography.body, flex: 1 },
-  transferName: { fontWeight: '600' },
+  transferName: { fontFamily: fonts.semibold },
   transferAmount: { ...typography.money },
   explainer: { ...typography.caption, lineHeight: 17 },
-
   settlementRow: {
     flexDirection: 'row',
     alignItems: 'center',

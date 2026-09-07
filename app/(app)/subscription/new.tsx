@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -29,7 +29,7 @@ import { useAuth } from '../../../src/data/auth';
 import { GroupProvider, useGroup } from '../../../src/data/groupContext';
 import { addSubscription } from '../../../src/data/mutations';
 import { friendlyError } from '../../../src/lib/supabase';
-import { colors, radius, spacing, typography } from '../../../src/theme';
+import { colors, fonts, radius, spacing, typography } from '../../../src/theme';
 
 const PRESETS = [
   { name: 'Netflix', cost: '15.49' },
@@ -41,7 +41,6 @@ const PRESETS = [
 export default function NewSubscriptionRoute() {
   const { groupId } = useLocalSearchParams<{ groupId: string }>();
   if (!groupId) return <ErrorBanner message="Missing group." />;
-
   return (
     <GroupProvider groupId={groupId}>
       <NewSubscriptionScreen />
@@ -53,9 +52,7 @@ function NewSubscriptionScreen() {
   const router = useRouter();
   const { userId } = useAuth();
   const { groupId, members, loading } = useGroup();
-
   const today = todayIso();
-
   const [name, setName] = useState('');
   const [costText, setCostText] = useState('');
   const [paidBy, setPaidBy] = useState<string | null>(userId);
@@ -65,13 +62,9 @@ function NewSubscriptionScreen() {
   const [categoryTouched, setCategoryTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-
   const costCents = parseAmountInput(costText) ?? 0;
   const includedIds = members.map((m) => m.id).filter((id) => !excluded.has(id));
-
   const shares = useMemo(() => evenSplit(costCents, includedIds), [costCents, includedIds.join(',')]);
-
-  // Guess a category from the plan name until the user picks one.
   useEffect(() => {
     if (categoryTouched) return;
     setCategory(detectCategory(name));
@@ -87,13 +80,10 @@ function NewSubscriptionScreen() {
   );
 
   const canSave = Boolean(name.trim()) && costCents > 0 && includedIds.length > 0 && Boolean(paidBy);
-
   const submit = async () => {
     if (!canSave || !paidBy || saving) return;
-
     setSaving(true);
     setError(null);
-
     try {
       await addSubscription({
         groupId,
@@ -112,7 +102,6 @@ function NewSubscriptionScreen() {
   };
 
   if (loading && members.length === 0) return <Loading label="Loading group" />;
-
   return (
     <KeyboardAvoidingView
       style={styles.flex}
@@ -211,7 +200,6 @@ function NewSubscriptionScreen() {
           {members.map((member, index) => {
             const included = !excluded.has(member.id);
             const share = shares.find((s) => s.userId === member.id);
-
             return (
               <Pressable
                 key={member.id}
@@ -268,9 +256,7 @@ function addDays(date: string, days: number): string {
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.lg, paddingBottom: spacing.xxl * 2, gap: spacing.md },
-
-  costInput: { fontSize: 26, fontWeight: '700' },
-
+  costInput: { fontSize: 26, fontFamily: fonts.bold },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   chip: {
     paddingHorizontal: spacing.md,
@@ -282,7 +268,6 @@ const styles = StyleSheet.create({
   },
   chipPressed: { backgroundColor: colors.primarySoft },
   chipText: { ...typography.body, fontSize: 14 },
-
   dateChip: {
     paddingHorizontal: spacing.md,
     paddingVertical: 8,
@@ -293,9 +278,8 @@ const styles = StyleSheet.create({
   },
   dateChipActive: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
   dateChipText: { ...typography.body, fontSize: 14 },
-  dateChipTextActive: { color: colors.primary, fontWeight: '700' },
+  dateChipTextActive: { color: colors.primary, fontFamily: fonts.bold },
   dateHint: { ...typography.caption },
-
   payerRow: { gap: spacing.sm, paddingVertical: spacing.xs, paddingRight: spacing.lg },
   payer: {
     alignItems: 'center',
@@ -309,8 +293,7 @@ const styles = StyleSheet.create({
   },
   payerSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   payerName: { ...typography.caption, color: colors.textMuted },
-  payerNameSelected: { color: colors.primary, fontWeight: '700' },
-
+  payerNameSelected: { color: colors.primary, fontFamily: fonts.bold },
   splitCard: { padding: 0, overflow: 'hidden' },
   splitRow: {
     flexDirection: 'row',
@@ -323,7 +306,6 @@ const styles = StyleSheet.create({
   splitName: { ...typography.body, flex: 1 },
   splitNameOff: { color: colors.textFaint },
   splitAmount: { ...typography.money, fontSize: 14 },
-
   save: { marginTop: spacing.sm },
   footnote: { ...typography.caption, textAlign: 'center', lineHeight: 17 },
 });

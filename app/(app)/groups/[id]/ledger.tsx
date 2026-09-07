@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -27,18 +27,16 @@ import { useAuth } from '../../../../src/data/auth';
 import { LedgerExpense, useGroup } from '../../../../src/data/groupContext';
 import { addExpense, deleteExpense } from '../../../../src/data/mutations';
 import { friendlyError } from '../../../../src/lib/supabase';
-import { colors, radius, shadowLifted, spacing, typography } from '../../../../src/theme';
+import { colors, fonts, radius, shadowLifted, spacing, typography } from '../../../../src/theme';
 
 export default function LedgerScreen() {
   const router = useRouter();
   const { userId } = useAuth();
   const { groupId, expenses, members, loading, error, refresh, displayName, memberById } = useGroup();
-
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [quickBusy, setQuickBusy] = useState<string | null>(null);
-
   const onRefresh = async () => {
     setRefreshing(true);
     await refresh();
@@ -48,7 +46,6 @@ export default function LedgerScreen() {
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return expenses;
-
     return expenses.filter((expense) => {
       const payer = memberById.get(expense.paid_by)?.name ?? '';
       const category = getCategory(expense.category).label;
@@ -61,8 +58,6 @@ export default function LedgerScreen() {
   }, [expenses, query, memberById]);
 
   const sections = useMemo(() => groupByDay(filtered), [filtered]);
-
-  /** Things this group logs often, offered as one-tap repeats. */
   const templates = useMemo(
     () =>
       suggestTemplates(
@@ -77,13 +72,8 @@ export default function LedgerScreen() {
     [expenses]
   );
 
-  /**
-   * One tap: you paid, split evenly across everyone, same amount as last
-   * time. Anything unusual goes through the full form instead.
-   */
   const quickAdd = async (template: (typeof templates)[number]) => {
     if (!userId || quickBusy) return;
-
     setQuickBusy(template.description);
     try {
       await addExpense({
@@ -116,7 +106,6 @@ export default function LedgerScreen() {
     });
 
     if (!confirmed) return;
-
     try {
       await deleteExpense(expense.id);
       await refresh();
@@ -138,8 +127,16 @@ export default function LedgerScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <GroupHeader
+        title="Ledger"
         action={
           <>
+            <Pressable
+              onPress={() => router.push(`/(app)/groups/${groupId}/insights`)}
+              hitSlop={8}
+              accessibilityLabel="Spending insights"
+            >
+              <Ionicons name="stats-chart" size={20} color={colors.textMuted} />
+            </Pressable>
             <Pressable
               onPress={() => router.push(`/(app)/groups/${groupId}/subscriptions`)}
               hitSlop={8}
@@ -227,7 +224,6 @@ export default function LedgerScreen() {
                     {templates.map((template) => {
                       const category = getCategory(template.category);
                       const busy = quickBusy === template.description;
-
                       return (
                         <Tappable
                           key={template.description}
@@ -324,7 +320,6 @@ function ExpenseRow({
   onLongPress: () => void;
 }) {
   const category = getCategory(expense.category);
-
   return (
     <Tappable onLongPress={onLongPress} haptic={false} scaleTo={0.99} style={styles.row}>
       <IconChip icon={category.icon} color={category.color} background={category.softColor} />
@@ -361,24 +356,19 @@ function ExpenseRow({
   );
 }
 
-/* ---------------------------------------------------------------------- */
-
 type Section =
   | { type: 'header'; key: string; label: string; totalCents: number }
   | { type: 'expense'; key: string; expense: LedgerExpense };
 
-/** Flattens into day-grouped rows, each header carrying that day's total. */
 function groupByDay(expenses: LedgerExpense[]): Section[] {
   const sections: Section[] = [];
   const dayTotals = new Map<string, number>();
-
   for (const expense of expenses) {
     const day = expense.created_at.slice(0, 10);
     dayTotals.set(day, (dayTotals.get(day) ?? 0) + expense.amountCents);
   }
 
   let currentDay: string | null = null;
-
   for (const expense of expenses) {
     const day = expense.created_at.slice(0, 10);
     if (day !== currentDay) {
@@ -401,13 +391,10 @@ function formatDayLabel(isoTimestamp: string): string {
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
-
   const sameDay = (a: Date, b: Date) =>
     a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-
   if (sameDay(date, today)) return 'Today';
   if (sameDay(date, yesterday)) return 'Yesterday';
-
   return date.toLocaleDateString(undefined, {
     weekday: 'short',
     month: 'short',
@@ -419,7 +406,6 @@ function formatDayLabel(isoTimestamp: string): string {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   searchWrap: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
-
   nudge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -433,7 +419,6 @@ const styles = StyleSheet.create({
   nudgeTitle: { ...typography.bodyStrong, fontSize: 14, color: colors.primary },
   nudgeText: { ...typography.caption, color: colors.primary, opacity: 0.85, lineHeight: 16 },
   list: { padding: spacing.lg, paddingTop: 0, paddingBottom: 130, gap: spacing.sm },
-
   monthRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
@@ -442,7 +427,6 @@ const styles = StyleSheet.create({
   },
   monthLabel: { ...typography.label },
   monthTotal: { ...typography.money, fontSize: 17 },
-
   quickBlock: { gap: spacing.xs, marginBottom: spacing.sm },
   quickLabel: { ...typography.label },
   quickRow: { gap: spacing.sm, paddingVertical: spacing.xs, paddingRight: spacing.lg },
@@ -459,9 +443,8 @@ const styles = StyleSheet.create({
     maxWidth: 190,
   },
   quickChipBusy: { opacity: 0.5 },
-  quickChipTitle: { ...typography.caption, color: colors.text, fontWeight: '700' },
+  quickChipTitle: { ...typography.caption, color: colors.text, fontFamily: fonts.bold },
   quickChipAmount: { ...typography.money, fontSize: 13 },
-
   dayHeaderRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
@@ -470,8 +453,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
   },
   dayHeader: { ...typography.label },
-  dayTotal: { ...typography.caption, fontWeight: '700' },
-
+  dayTotal: { ...typography.caption, fontFamily: fonts.bold },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -490,7 +472,6 @@ const styles = StyleSheet.create({
   rowAmounts: { alignItems: 'flex-end', gap: 2 },
   rowAmount: { ...typography.money },
   rowShare: { ...typography.caption, fontSize: 11 },
-
   fab: {
     position: 'absolute',
     left: spacing.lg,
@@ -504,5 +485,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: spacing.sm,
   },
-  fabLabel: { color: colors.textInverse, fontSize: 16, fontWeight: '700' },
+  fabLabel: { color: colors.textInverse, fontSize: 16, fontFamily: fonts.bold },
 });

@@ -7,10 +7,6 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from './auth';
 import { useRealtimeRefresh } from './realtime';
 
-/**
- * Set once if the summaries RPC is absent, so the slower path is not retried
- * on every refresh.
- */
 let summariesRpcMissing = false;
 
 interface SummaryRow {
@@ -34,24 +30,16 @@ export interface GroupSummary {
   group: GroupRow;
   role: 'owner' | 'member';
   memberCount: number;
-  /** The signed-in user's net position in this group, in cents. */
   netCents: number;
-  /** Enough to render an avatar stack on the card. */
   members: { id: string; name: string }[];
 }
 
-/**
- * Every group the user belongs to, each with their live net balance so the
- * home screen answers "who owes what" without a single tap.
- */
 export function useGroups() {
   const { userId } = useAuth();
   const [summaries, setSummaries] = useState<GroupSummary[]>([]);
-  /** Across every group, for the getting-started checklist. */
   const [expenseCount, setExpenseCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
   const load = useCallback(async () => {
     if (!userId) {
       setSummaries([]);
@@ -59,12 +47,8 @@ export function useGroups() {
       return;
     }
 
-    // Fast path: one round trip, netted in Postgres. Falls through to the
-    // client-side computation below if 0004_group_summaries.sql has not been
-    // applied, so the app keeps working either way.
     if (!summariesRpcMissing) {
       const { data, error: rpcError } = await supabase.rpc('get_my_group_summaries');
-
       if (!rpcError && data) {
         setSummaries(
           (data as SummaryRow[]).map((row) => ({
@@ -100,8 +84,6 @@ export function useGroups() {
     }
 
     try {
-      // RLS already limits every table below to the caller's groups, so these
-      // unfiltered reads only ever return rows the user is entitled to.
       const [membershipsRes, groupsRes, expensesRes, splitsRes, settlementsRes, usersRes] =
         await Promise.all([
         supabase.from('memberships').select('*'),
@@ -120,12 +102,9 @@ export function useGroups() {
         settlementsRes.error ??
         usersRes.error;
       if (firstError) throw firstError;
-
       const nameById = new Map((usersRes.data ?? []).map((user) => [user.id, user.name]));
-
       const memberships = (membershipsRes.data ?? []) as MembershipRow[];
       const groups = (groupsRes.data ?? []) as GroupRow[];
-
       const splitsByExpense = new Map<string, { userId: string; shareCents: number }[]>();
       for (const split of splitsRes.data ?? []) {
         const list = splitsByExpense.get(split.expense_id) ?? [];

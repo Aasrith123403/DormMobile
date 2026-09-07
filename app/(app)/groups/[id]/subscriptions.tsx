@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -12,16 +12,14 @@ import { describeNextCharge, isDue, todayIso } from '../../../../src/core/subscr
 import { GroupSubscription, useGroup } from '../../../../src/data/groupContext';
 import { catchUpSubscriptions, deleteSubscription, setSubscriptionActive } from '../../../../src/data/mutations';
 import { friendlyError } from '../../../../src/lib/supabase';
-import { colors, spacing, typography } from '../../../../src/theme';
+import { colors, fonts, spacing, typography } from '../../../../src/theme';
 
 export default function SubscriptionsScreen() {
   const router = useRouter();
   const { groupId, subscriptions, memberById, error, refresh, displayName } = useGroup();
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
-
   const today = todayIso();
-
   const onRefresh = async () => {
     setRefreshing(true);
     await refresh();
@@ -49,12 +47,12 @@ export default function SubscriptionsScreen() {
 
   const active = subscriptions.filter((s) => s.active);
   const paused = subscriptions.filter((s) => !s.active);
-
   const monthlyTotalCents = active.reduce((sum, s) => sum + s.monthlyCostCents, 0);
-
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <GroupHeader
+        title="Recurring"
+        tone="violet"
         subtitle={
           active.length > 0
             ? `${active.length} active · ${formatMoney(monthlyTotalCents)} a month`
@@ -171,7 +169,6 @@ function SubscriptionCard({
     });
 
     if (!confirmed) return;
-
     try {
       await deleteSubscription(subscription.id);
       await onRefresh();
@@ -232,7 +229,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.md },
   sectionTitle: { ...typography.label, marginTop: spacing.sm },
-
   card: { gap: spacing.sm },
   cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   cardTitleBlock: { flex: 1, gap: 2 },
@@ -241,11 +237,9 @@ const styles = StyleSheet.create({
   cardAmounts: { alignItems: 'flex-end' },
   cardAmount: { ...typography.money, fontSize: 18 },
   cardPerMonth: { ...typography.caption, fontSize: 11 },
-
   chargeRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   chargeText: { ...typography.caption, flex: 1 },
-  perPerson: { ...typography.caption, fontWeight: '600' },
-
+  perPerson: { ...typography.caption, fontFamily: fonts.semibold },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -253,7 +247,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
   cardActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.lg },
-  actionLink: { ...typography.caption, color: colors.primary, fontWeight: '700' },
-
+  actionLink: { ...typography.caption, color: colors.primary, fontFamily: fonts.bold },
   footnote: { ...typography.caption, textAlign: 'center', lineHeight: 17 },
 });

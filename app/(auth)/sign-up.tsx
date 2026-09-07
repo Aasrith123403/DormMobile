@@ -3,12 +3,13 @@ import React, { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 
+import { CurvedHero, Smiley } from '../../src/components/shapes';
 import { Button, Card, ErrorBanner, Field, Screen } from '../../src/components/ui';
 import { useAuth } from '../../src/data/auth';
 import { friendlyError } from '../../src/lib/supabase';
-import { colors, spacing, typography } from '../../src/theme';
+import { colors, fonts, spacing, typography } from '../../src/theme';
 
 export default function SignUp() {
   const { signUp } = useAuth();
@@ -18,11 +19,9 @@ export default function SignUp() {
   const [error, setError] = useState<string | null>(null);
   const [needsConfirmation, setNeedsConfirmation] = useState(false);
   const [busy, setBusy] = useState(false);
-
   const submit = async () => {
     if (busy) return;
     setError(null);
-
     if (password.length < 6) {
       setError('Password must be at least 6 characters.');
       return;
@@ -31,8 +30,6 @@ export default function SignUp() {
     setBusy(true);
     try {
       await signUp(email, password, name);
-      // With email confirmation on (the Supabase default) no session arrives
-      // until the link is clicked, so say so instead of hanging on this screen.
       setNeedsConfirmation(true);
     } catch (caught) {
       setError(friendlyError(caught));
@@ -45,7 +42,10 @@ export default function SignUp() {
     return (
       <SafeAreaView style={styles.safe}>
         <Screen scroll contentStyle={styles.content}>
-          <Text style={styles.wordmark}>Check your email</Text>
+          <CurvedHero tone="brand" contentStyle={styles.hero} style={styles.heroBleed}>
+            <Smiley size={80} tone="sunset" asleep />
+            <Text style={styles.wordmark}>Check your email</Text>
+          </CurvedHero>
           <Card>
             <Text style={styles.body}>
               We sent a confirmation link to <Text style={styles.strong}>{email.trim()}</Text>. Tap it,
@@ -71,12 +71,13 @@ export default function SignUp() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <Screen scroll contentStyle={styles.content}>
-          <View style={styles.header}>
+          <CurvedHero tone="sunset" contentStyle={styles.hero} style={styles.heroBleed}>
+            <Smiley size={80} tone="brand" />
             <Text style={styles.wordmark}>Create account</Text>
             <Text style={styles.tagline}>
               Everyone in the group needs one — it keeps the ledger shared and live.
             </Text>
-          </View>
+          </CurvedHero>
 
           {error ? <ErrorBanner message={error} /> : null}
 
@@ -149,17 +150,29 @@ export default function SignUp() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
-  content: { gap: spacing.lg, paddingTop: spacing.xxl },
+  content: { gap: spacing.lg, padding: 0, paddingHorizontal: spacing.xl, paddingBottom: spacing.xxl },
   header: { gap: spacing.xs, marginBottom: spacing.md },
-  wordmark: { ...typography.display },
-  tagline: { ...typography.body, color: colors.textMuted },
+  heroBleed: { marginHorizontal: -spacing.xl, marginBottom: spacing.md },
+  hero: {
+    alignItems: 'center',
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.xxl + 16,
+    gap: spacing.sm,
+  },
+  wordmark: { ...typography.display, color: colors.textInverse, marginTop: spacing.sm },
+  tagline: {
+    ...typography.body,
+    color: 'rgba(255,255,255,0.92)',
+    textAlign: 'center',
+    maxWidth: 300,
+  },
   body: { ...typography.body, lineHeight: 22 },
-  strong: { fontWeight: '700' },
+  strong: { fontFamily: fonts.bold },
   hint: { ...typography.caption, lineHeight: 18 },
   pitch: { gap: spacing.md, marginBottom: spacing.xs },
   pitchRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   pitchText: { ...typography.body, flex: 1, lineHeight: 20, color: colors.textMuted },
   footer: { flexDirection: 'row', justifyContent: 'center', marginTop: spacing.md },
   footerText: { ...typography.body, color: colors.textMuted },
-  link: { ...typography.body, color: colors.primary, fontWeight: '600', textAlign: 'center' },
+  link: { ...typography.body, color: colors.primary, fontFamily: fonts.semibold, textAlign: 'center' },
 });

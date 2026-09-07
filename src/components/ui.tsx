@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { ReactNode, useRef } from 'react';
 import {
@@ -18,19 +18,8 @@ import {
 } from 'react-native';
 
 import { tapFeedback } from './haptics';
-import {
-  avatarGradient,
-  colors,
-  gradients,
-  initials,
-  radius,
-  shadow,
-  shadowLifted,
-  spacing,
-  typography,
-} from '../theme';
-
-/* -------------------------------------------------------------- Screen -- */
+import { Smiley } from './shapes';
+import { avatarGradient, colors, fonts, glow, gradients, initials, radius, shadowLifted, spacing, typography } from '../theme';
 
 export function Screen({
   children,
@@ -58,23 +47,17 @@ export function Screen({
   return <View style={[styles.screen, style]}>{children}</View>;
 }
 
-/* ------------------------------------------------------------ Pressable -- */
-
-/**
- * Press feedback that actually feels like a button: a small spring scale plus
- * a haptic tick. Used by everything tappable so the whole app responds the
- * same way.
- */
 export function Tappable({
   children,
   onPress,
   onLongPress,
   style,
   disabled,
-  scaleTo = 0.97,
+  scaleTo = 0.96,
   haptic = true,
   accessibilityLabel,
   accessibilityRole = 'button',
+  selected,
 }: {
   children: ReactNode;
   onPress?: () => void;
@@ -85,15 +68,15 @@ export function Tappable({
   haptic?: boolean;
   accessibilityLabel?: string;
   accessibilityRole?: 'button' | 'checkbox' | 'none';
+  selected?: boolean;
 }) {
   const scale = useRef(new Animated.Value(1)).current;
-
   const animate = (to: number) => {
     Animated.spring(scale, {
       toValue: to,
       useNativeDriver: Platform.OS !== 'web',
       speed: 40,
-      bounciness: 4,
+      bounciness: 5,
     }).start();
   };
 
@@ -101,6 +84,7 @@ export function Tappable({
     <Pressable
       accessibilityRole={accessibilityRole}
       accessibilityLabel={accessibilityLabel}
+      accessibilityState={selected === undefined ? undefined : { checked: selected }}
       disabled={disabled}
       onPressIn={() => animate(scaleTo)}
       onPressOut={() => animate(1)}
@@ -113,31 +97,32 @@ export function Tappable({
           : undefined
       }
       onLongPress={onLongPress}
-      delayLongPress={400}
+      delayLongPress={450}
     >
       <Animated.View style={[{ transform: [{ scale }] }, style]}>{children}</Animated.View>
     </Pressable>
   );
 }
 
-/* ---------------------------------------------------------------- Card -- */
-
 export function Card({
   children,
   style,
   onPress,
+  onLongPress,
   padded = true,
+  raised = false,
 }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
   onPress?: () => void;
+  onLongPress?: () => void;
   padded?: boolean;
+  raised?: boolean;
 }) {
-  const content = [styles.card, padded && styles.cardPadded, shadow, style];
-
-  if (onPress) {
+  const content = [styles.card, raised && styles.cardRaised, padded && styles.cardPadded, style];
+  if (onPress || onLongPress) {
     return (
-      <Tappable onPress={onPress} style={content} scaleTo={0.985}>
+      <Tappable onPress={onPress} onLongPress={onLongPress} style={content} scaleTo={0.985}>
         {children}
       </Tappable>
     );
@@ -145,21 +130,21 @@ export function Card({
   return <View style={content}>{children}</View>;
 }
 
-/** Full-bleed gradient card used for the balance heroes. */
 export function GradientCard({
   children,
-  colors: gradientColors = gradients.brand,
+  tone = 'brand',
   style,
   onPress,
 }: {
   children: ReactNode;
-  colors?: readonly [string, string];
+  tone?: keyof typeof gradients;
   style?: StyleProp<ViewStyle>;
   onPress?: () => void;
 }) {
+  const pair = gradients[tone];
   const inner = (
     <LinearGradient
-      colors={[gradientColors[0], gradientColors[1]]}
+      colors={[pair[0], pair[1]]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={[styles.gradientCard, style]}
@@ -168,8 +153,6 @@ export function GradientCard({
     </LinearGradient>
   );
 
-  // The shadow lives on a wrapper, which must share the gradient's radius or
-  // its square corners show through behind the rounded card.
   if (onPress) {
     return (
       <Tappable onPress={onPress} style={[styles.gradientShadow, shadowLifted]} scaleTo={0.985}>
@@ -179,8 +162,6 @@ export function GradientCard({
   }
   return <View style={[styles.gradientShadow, shadowLifted]}>{inner}</View>;
 }
-
-/* -------------------------------------------------------------- Button -- */
 
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'venmo' | 'subtle';
 
@@ -200,13 +181,11 @@ export function Button({
   loading?: boolean;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
-  /** Ionicons glyph name. */
   icon?: string;
   size?: 'sm' | 'md';
 }) {
   const isDisabled = disabled || loading;
   const palette = buttonPalette[variant];
-
   return (
     <Tappable
       onPress={onPress}
@@ -215,7 +194,9 @@ export function Button({
       style={[
         styles.button,
         size === 'sm' && styles.buttonSmall,
-        { backgroundColor: palette.background, borderColor: palette.border },
+        { backgroundColor: palette.background },
+
+        variant === 'primary' && !isDisabled ? glow() : null,
         isDisabled && styles.buttonDisabled,
         style,
       ]}
@@ -225,9 +206,13 @@ export function Button({
           <ActivityIndicator color={palette.text} />
         ) : (
           <>
-            {icon ? <Ionicons name={icon as never} size={17} color={palette.text} /> : null}
+            {icon ? <Ionicons name={icon as never} size={18} color={palette.text} /> : null}
             <Text
-              style={[styles.buttonText, size === 'sm' && styles.buttonTextSmall, { color: palette.text }]}
+              style={[
+                styles.buttonText,
+                size === 'sm' && styles.buttonTextSmall,
+                { color: palette.text },
+              ]}
               numberOfLines={1}
             >
               {title}
@@ -239,16 +224,57 @@ export function Button({
   );
 }
 
-const buttonPalette: Record<ButtonVariant, { background: string; text: string; border: string }> = {
-  primary: { background: colors.primary, text: colors.textInverse, border: colors.primary },
-  secondary: { background: colors.surface, text: colors.text, border: colors.borderStrong },
-  subtle: { background: colors.surfaceAlt, text: colors.text, border: 'transparent' },
-  ghost: { background: 'transparent', text: colors.primary, border: 'transparent' },
-  danger: { background: colors.negativeSoft, text: colors.negative, border: 'transparent' },
-  venmo: { background: colors.venmo, text: colors.textInverse, border: colors.venmo },
+const buttonPalette: Record<ButtonVariant, { background: string; text: string }> = {
+  primary: { background: colors.action, text: colors.textInverse },
+  secondary: { background: colors.surfaceSunken, text: colors.text },
+  subtle: { background: colors.surface, text: colors.text },
+  ghost: { background: 'transparent', text: colors.action },
+  danger: { background: colors.negativeSoft, text: colors.negative },
+  venmo: { background: colors.venmo, text: colors.textInverse },
 };
 
-/* --------------------------------------------------------------- Field -- */
+export function CircleButton({
+  icon,
+  onPress,
+  size = 56,
+  tone = 'dark',
+  accessibilityLabel,
+  style,
+}: {
+  icon: string;
+  onPress: () => void;
+  size?: number;
+  tone?: 'dark' | 'light' | 'action' | 'ghost';
+  accessibilityLabel?: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const palette = {
+    dark: { background: colors.text, icon: colors.textInverse },
+    light: { background: colors.surfaceRaised, icon: colors.text },
+    action: { background: colors.action, icon: colors.textInverse },
+    ghost: { background: 'rgba(255,255,255,0.25)', icon: colors.textInverse },
+  }[tone];
+
+  return (
+    <Tappable
+      onPress={onPress}
+      accessibilityLabel={accessibilityLabel ?? icon}
+      style={[
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: palette.background,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        style,
+      ]}
+    >
+      <Ionicons name={icon as never} size={size * 0.42} color={palette.icon} />
+    </Tappable>
+  );
+}
 
 export function Field({
   label,
@@ -270,9 +296,9 @@ export function Field({
     <View style={[styles.field, style]}>
       {label ? <Text style={styles.fieldLabel}>{label}</Text> : null}
       <View style={[styles.inputWrap, error ? styles.inputError : null]}>
-        {icon ? <Ionicons name={icon as never} size={18} color={colors.textFaint} /> : null}
+        {icon ? <Ionicons name={icon as never} size={19} color={colors.textSoft} /> : null}
         <TextInput
-          placeholderTextColor={colors.textFaint}
+          placeholderTextColor={colors.textSoft}
           {...inputProps}
           style={[styles.input, inputStyle]}
         />
@@ -286,11 +312,70 @@ export function Field({
   );
 }
 
-/* -------------------------------------------------------------- Avatar -- */
+export function ChoiceRow({
+  label,
+  sublabel,
+  icon,
+  selected = false,
+  onPress,
+  disabled,
+  multi = false,
+}: {
+  label: string;
+  sublabel?: string;
+  icon?: string;
+  selected?: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+  multi?: boolean;
+}) {
+  return (
+    <Tappable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="checkbox"
+      accessibilityLabel={label}
+      selected={selected}
+      scaleTo={0.985}
+      style={[styles.choiceRow, selected && styles.choiceRowSelected]}
+    >
+      {icon ? (
+        <View style={[styles.choiceIcon, selected && styles.choiceIconSelected]}>
+          <Ionicons
+            name={icon as never}
+            size={19}
+            color={selected ? colors.action : colors.textMuted}
+          />
+        </View>
+      ) : null}
+
+      <View style={styles.choiceBody}>
+        <Text style={[styles.choiceLabel, selected && styles.choiceLabelSelected]} numberOfLines={2}>
+          {label}
+        </Text>
+        {sublabel ? (
+          <Text style={styles.choiceSub} numberOfLines={2}>
+            {sublabel}
+          </Text>
+        ) : null}
+      </View>
+
+      <View
+        style={[
+          styles.choiceMark,
+          multi && styles.choiceMarkSquare,
+          selected && styles.choiceMarkSelected,
+        ]}
+      >
+        {selected ? <Ionicons name="checkmark" size={15} color={colors.textInverse} /> : null}
+      </View>
+    </Tappable>
+  );
+}
 
 export function Avatar({
   name,
-  size = 36,
+  size = 40,
   id,
   ring = false,
 }: {
@@ -301,7 +386,6 @@ export function Avatar({
 }) {
   const seed = id ?? name ?? '?';
   const [from, to] = avatarGradient(seed);
-
   return (
     <LinearGradient
       colors={[from, to]}
@@ -310,18 +394,17 @@ export function Avatar({
       style={[
         styles.avatar,
         { width: size, height: size, borderRadius: size / 2 },
-        ring && { borderWidth: 2, borderColor: colors.surface },
+        ring && { borderWidth: 2.5, borderColor: colors.background },
       ]}
     >
-      <Text style={[styles.avatarText, { fontSize: size * 0.38 }]}>{initials(name)}</Text>
+      <Text style={[styles.avatarText, { fontSize: size * 0.36 }]}>{initials(name)}</Text>
     </LinearGradient>
   );
 }
 
-/** Overlapping avatars for "who is in this split". */
 export function AvatarStack({
   people,
-  size = 26,
+  size = 28,
   max = 4,
 }: {
   people: { id: string; name: string }[];
@@ -330,11 +413,10 @@ export function AvatarStack({
 }) {
   const shown = people.slice(0, max);
   const extra = people.length - shown.length;
-
   return (
     <View style={styles.avatarStack}>
       {shown.map((person, index) => (
-        <View key={person.id} style={index > 0 ? { marginLeft: -size * 0.34 } : undefined}>
+        <View key={person.id} style={index > 0 ? { marginLeft: -size * 0.32 } : undefined}>
           <Avatar name={person.name} id={person.id} size={size} ring />
         </View>
       ))}
@@ -342,24 +424,21 @@ export function AvatarStack({
         <View
           style={[
             styles.avatarMore,
-            { width: size, height: size, borderRadius: size / 2, marginLeft: -size * 0.34 },
+            { width: size, height: size, borderRadius: size / 2, marginLeft: -size * 0.32 },
           ]}
         >
-          <Text style={[styles.avatarMoreText, { fontSize: size * 0.36 }]}>+{extra}</Text>
+          <Text style={[styles.avatarMoreText, { fontSize: size * 0.34 }]}>+{extra}</Text>
         </View>
       ) : null}
     </View>
   );
 }
 
-/* ------------------------------------------------------------- Icon bit -- */
-
-/** Rounded, tinted icon tile — used for categories and stat rows. */
 export function IconChip({
   icon,
   color,
   background,
-  size = 38,
+  size = 42,
 }: {
   icon: string;
   color: string;
@@ -370,26 +449,43 @@ export function IconChip({
     <View
       style={[
         styles.iconChip,
-        { width: size, height: size, borderRadius: size / 3, backgroundColor: background },
+        { width: size, height: size, borderRadius: size / 2.6, backgroundColor: background },
       ]}
     >
-      <Ionicons name={icon as never} size={size * 0.5} color={color} />
+      <Ionicons name={icon as never} size={size * 0.48} color={color} />
     </View>
   );
 }
 
-/* ------------------------------------------------------------ Feedback -- */
+export function MetaRow({ items }: { items: { icon?: string; label: string }[] }) {
+  return (
+    <View style={styles.metaRow}>
+      {items.map((item, index) => (
+        <View key={`${item.label}-${index}`} style={styles.metaItem}>
+          {item.icon ? (
+            <Ionicons name={item.icon as never} size={13} color={colors.textSoft} />
+          ) : null}
+          <Text style={styles.metaText} numberOfLines={1}>
+            {item.label}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
 
 export function EmptyState({
   icon,
   title,
   message,
   action,
+  tone = 'brand',
 }: {
   icon?: string;
   title: string;
   message?: string;
   action?: ReactNode;
+  tone?: keyof typeof gradients;
 }) {
   return (
     <View style={styles.empty}>
@@ -397,7 +493,9 @@ export function EmptyState({
         <View style={styles.emptyIconWrap}>
           <Ionicons name={icon as never} size={30} color={colors.primary} />
         </View>
-      ) : null}
+      ) : (
+        <Smiley size={84} tone={tone} />
+      )}
       <Text style={styles.emptyTitle}>{title}</Text>
       {message ? <Text style={styles.emptyMessage}>{message}</Text> : null}
       {action ? <View style={styles.emptyAction}>{action}</View> : null}
@@ -417,7 +515,7 @@ export function Loading({ label }: { label?: string }) {
 export function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <View style={styles.errorBanner}>
-      <Ionicons name="alert-circle" size={18} color={colors.negative} />
+      <Ionicons name="alert-circle" size={19} color={colors.negative} />
       <Text style={styles.errorBannerText}>{message}</Text>
       {onRetry ? (
         <Tappable onPress={onRetry} style={styles.retry}>
@@ -434,15 +532,16 @@ export function Badge({
   icon,
 }: {
   label: string;
-  tone?: 'neutral' | 'positive' | 'negative' | 'primary' | 'warning';
+  tone?: 'neutral' | 'positive' | 'negative' | 'primary' | 'warning' | 'action';
   icon?: string;
 }) {
   const tones = {
     neutral: { background: colors.surfaceAlt, text: colors.textMuted },
     positive: { background: colors.positiveSoft, text: colors.positive },
     negative: { background: colors.negativeSoft, text: colors.negative },
-    primary: { background: colors.primarySoft, text: colors.primary },
+    primary: { background: colors.primarySoft, text: colors.primaryDark },
     warning: { background: colors.warningSoft, text: colors.warning },
+    action: { background: colors.actionSoft, text: colors.action },
   }[tone];
 
   return (
@@ -457,16 +556,23 @@ export function Divider() {
   return <View style={styles.divider} />;
 }
 
-export function SectionHeader({ title, action }: { title: string; action?: ReactNode }) {
+export function SectionHeader({
+  title,
+  action,
+  style,
+}: {
+  title: string;
+  action?: ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
   return (
-    <View style={styles.sectionHeader}>
+    <View style={[styles.sectionHeader, style]}>
       <Text style={styles.sectionHeaderText}>{title}</Text>
       {action}
     </View>
   );
 }
 
-/** iOS-style segmented control, used for split mode and insight ranges. */
 export function Segmented<T extends string>({
   options,
   value,
@@ -491,7 +597,9 @@ export function Segmented<T extends string>({
             }}
             style={[styles.segment, active && styles.segmentActive]}
           >
-            <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{option.label}</Text>
+            <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+              {option.label}
+            </Text>
           </Pressable>
         );
       })}
@@ -499,140 +607,170 @@ export function Segmented<T extends string>({
   );
 }
 
-/* --------------------------------------------------------------------- */
-
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  screenContent: { padding: spacing.lg, paddingBottom: spacing.xxl * 2, gap: spacing.md },
-
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-  },
+  screenContent: { padding: spacing.xl, paddingBottom: spacing.xxxl * 2, gap: spacing.md },
+  card: { backgroundColor: colors.surface, borderRadius: radius.lg },
+  cardRaised: { backgroundColor: colors.surfaceAlt },
   cardPadded: { padding: spacing.lg },
-
   gradientShadow: { borderRadius: radius.xl },
   gradientCard: { borderRadius: radius.xl, padding: spacing.xl, overflow: 'hidden' },
-
   button: {
-    minHeight: 52,
-    borderRadius: radius.md,
-    borderWidth: 1,
+    minHeight: 56,
+    borderRadius: radius.pill,
     justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.xl,
   },
-  buttonSmall: { minHeight: 40, borderRadius: radius.sm, paddingHorizontal: spacing.md },
-  buttonInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
-  buttonDisabled: { opacity: 0.42 },
-  buttonText: { fontSize: 16, fontWeight: '700' },
+  buttonSmall: { minHeight: 42, paddingHorizontal: spacing.lg },
+  buttonInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  buttonDisabled: { opacity: 0.4 },
+  buttonText: { fontFamily: fonts.semibold, fontSize: 16, letterSpacing: -0.2 },
   buttonTextSmall: { fontSize: 14 },
-
-  field: { gap: spacing.xs },
+  field: { gap: spacing.sm },
   fieldLabel: { ...typography.label },
   inputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
+    gap: spacing.md,
+    backgroundColor: colors.surfaceSunken,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.lg,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
   },
   input: {
     flex: 1,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.lg,
+    fontFamily: fonts.medium,
     fontSize: 16,
     color: colors.text,
-    minHeight: 48,
-    // Removes the default focus ring on web in favour of the border.
+    minHeight: 56,
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
   },
   inputError: { borderColor: colors.negative },
   fieldError: { ...typography.caption, color: colors.negative },
   fieldHint: { ...typography.caption },
-
-  avatar: { alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: '#FFFFFF', fontWeight: '800' },
-  avatarStack: { flexDirection: 'row', alignItems: 'center' },
-  avatarMore: {
-    backgroundColor: colors.surfaceSunken,
+  choiceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    minHeight: 62,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+  },
+  choiceRowSelected: { backgroundColor: colors.surfaceAlt },
+  choiceIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: colors.surface,
+    backgroundColor: colors.surfaceAlt,
   },
-  avatarMoreText: { color: colors.textMuted, fontWeight: '800' },
-
+  choiceIconSelected: { backgroundColor: colors.primarySoft },
+  choiceBody: { flex: 1, gap: 1 },
+  choiceLabel: { fontFamily: fonts.medium, fontSize: 16, color: colors.text },
+  choiceLabelSelected: { fontFamily: fonts.semibold, color: colors.text },
+  choiceSub: { ...typography.caption, fontSize: 12.5 },
+  choiceMark: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 2,
+    borderColor: colors.borderStrong,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  choiceMarkSquare: { borderRadius: 9 },
+  choiceMarkSelected: { backgroundColor: colors.action, borderColor: colors.action },
+  avatar: { alignItems: 'center', justifyContent: 'center' },
+  avatarText: { color: '#FFFFFF', fontFamily: fonts.bold },
+  avatarStack: { flexDirection: 'row', alignItems: 'center' },
+  avatarMore: {
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2.5,
+    borderColor: colors.background,
+  },
+  avatarMoreText: { color: colors.textMuted, fontFamily: fonts.bold },
   iconChip: { alignItems: 'center', justifyContent: 'center' },
-
-  empty: { alignItems: 'center', paddingVertical: spacing.xxl, paddingHorizontal: spacing.xl, gap: spacing.sm },
+  metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.md },
+  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1, minWidth: 0 },
+  metaText: { fontFamily: fonts.regular, fontSize: 12.5, color: colors.textSoft, flexShrink: 1 },
+  empty: {
+    alignItems: 'center',
+    paddingVertical: spacing.xxl,
+    paddingHorizontal: spacing.lg,
+    gap: spacing.md,
+  },
   emptyIconWrap: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     backgroundColor: colors.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: spacing.xs,
   },
-  emptyTitle: { ...typography.heading, fontSize: 18, textAlign: 'center' },
-  emptyMessage: { ...typography.body, color: colors.textMuted, textAlign: 'center', lineHeight: 21 },
-  emptyAction: { marginTop: spacing.md, alignSelf: 'stretch' },
-
-  loading: { padding: spacing.xxl, alignItems: 'center', gap: spacing.sm },
+  emptyTitle: { ...typography.title, textAlign: 'center' },
+  emptyMessage: { ...typography.body, textAlign: 'center', maxWidth: 300 },
+  emptyAction: { marginTop: spacing.sm, alignSelf: 'stretch' },
+  loading: { padding: spacing.xxl, alignItems: 'center', gap: spacing.md },
   loadingLabel: { ...typography.caption },
-
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: spacing.md,
     backgroundColor: colors.negativeSoft,
     borderRadius: radius.md,
-    padding: spacing.md,
+    padding: spacing.lg,
   },
   errorBannerText: { ...typography.body, color: colors.negative, flex: 1 },
   retry: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
   retryText: { ...typography.bodyStrong, color: colors.negative },
-
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
     borderRadius: radius.pill,
     alignSelf: 'flex-start',
   },
-  badgeText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.2 },
-
-  divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
-
+  badgeText: { fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 0.2 },
+  divider: { height: 1, backgroundColor: colors.border },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: spacing.sm,
-    minHeight: 28,
+    marginTop: spacing.lg,
+    marginBottom: spacing.xs,
+    minHeight: 32,
+    gap: spacing.md,
   },
-  sectionHeaderText: { ...typography.label },
-
+  sectionHeaderText: { ...typography.title, flex: 1 },
   segmented: {
     flexDirection: 'row',
     backgroundColor: colors.surfaceSunken,
     borderRadius: radius.pill,
-    padding: 3,
+    padding: 4,
   },
   segment: {
     flex: 1,
-    paddingVertical: 7,
+    paddingVertical: 9,
     paddingHorizontal: spacing.md,
     borderRadius: radius.pill,
     alignItems: 'center',
   },
-  segmentActive: { backgroundColor: colors.surface, ...shadow },
-  segmentText: { fontSize: 13.5, fontWeight: '700', color: colors.textMuted },
-  segmentTextActive: { color: colors.text },
+  segmentActive: { backgroundColor: colors.primary },
+  segmentText: { fontFamily: fonts.medium, fontSize: 13.5, color: colors.textMuted },
+  segmentTextActive: { fontFamily: fonts.semibold, color: colors.textInverse },
 });

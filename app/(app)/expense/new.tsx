@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -47,12 +47,11 @@ import { addExpense } from '../../../src/data/mutations';
 import { uploadReceipt } from '../../../src/data/storage';
 import { friendlyError } from '../../../src/lib/supabase';
 import { isOcrEnabled, parseReceipt } from '../../../src/ocr/parseReceipt';
-import { colors, radius, shadowLifted, spacing, typography } from '../../../src/theme';
+import { colors, fonts, radius, shadowLifted, spacing, typography } from '../../../src/theme';
 
 export default function NewExpenseRoute() {
   const { groupId } = useLocalSearchParams<{ groupId: string }>();
   if (!groupId) return <ErrorBanner message="Missing group." />;
-
   return (
     <GroupProvider groupId={groupId}>
       <NewExpenseScreen />
@@ -60,57 +59,24 @@ export default function NewExpenseRoute() {
   );
 }
 
-/**
- * Two genuinely different situations, not one situation with options:
- *
- *   'one'        — somebody covered the bill and it gets split. There is a
- *                  total, a payer, and a question about who owes what.
- *   'separately' — everyone paid their own way. Each person's amount IS their
- *                  share, the total is just the sum, and nobody owes anybody.
- *
- * Keeping them separate is what removes the confusion: 'separately' has no
- * split step, no total to reconcile against, and no way to be "over" or
- * "short", because there is nothing for the numbers to disagree with.
- */
 type PayMode = 'one' | 'separately';
 
-/** What the shared keypad is currently driving. */
 type EditTarget = { kind: 'total' } | { kind: 'member'; userId: string };
 
 function NewExpenseScreen() {
   const router = useRouter();
   const { userId } = useAuth();
   const { groupId, members, loading } = useGroup();
-
   const [payMode, setPayMode] = useState<PayMode>('one');
-
-  /* ------------------------------------------------------- one payer -- */
-
   const [paidBy, setPaidBy] = useState<string | null>(userId);
   const [participants, setParticipants] = useState<SplitParticipant[] | null>(null);
   const [splitMode, setSplitMode] = useState<SplitMode>('even');
   const [sharesTouched, setSharesTouched] = useState(false);
   const [amountRaw, setAmountRaw] = useState('');
-
-  /* ------------------------------------------------------ separately -- */
-
-  /** What each person paid for themselves. The total is simply the sum. */
   const [ownCents, setOwnCents] = useState<Record<string, number>>({});
-
-  /* ---------------------------------------------------------- keypad -- */
-
-  /**
-   * Digit strings, held as text rather than derived from cents: "15." is a
-   * valid thing to have typed so far, and a cents round-trip would drop the
-   * decimal point before the next key arrived.
-   */
   const [memberRaw, setMemberRaw] = useState('');
   const [editing, setEditing] = useState<EditTarget>({ kind: 'total' });
-  /** The first digit after picking a field replaces what was there. */
   const [editingPristine, setEditingPristine] = useState(false);
-
-  /* --------------------------------------------------------- details -- */
-
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState<CategoryId | null>(null);
   const [categoryTouched, setCategoryTouched] = useState(false);
@@ -118,23 +84,15 @@ function NewExpenseScreen() {
   const [receiptUri, setReceiptUri] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanNote, setScanNote] = useState<string | null>(null);
-
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-
   const separately = payMode === 'separately';
-
-  /* ---------------------------------------------------------- totals -- */
-
   const ownList = members
     .map((m) => ({ userId: m.id, paidCents: Math.round(ownCents[m.id] ?? 0) }))
     .filter((p) => p.paidCents > 0);
 
   const separateTotal = ownList.reduce((sum, p) => sum + p.paidCents, 0);
-
-  // In 'separately' the total is derived, so the two can never disagree.
   const amountCents = separately ? separateTotal : (parseAmountInput(amountRaw) ?? 0);
-
   const effectiveParticipants = useMemo<SplitParticipant[]>(
     () => participants ?? members.map((member) => ({ userId: member.id, included: true })),
     [participants, members]
@@ -152,18 +110,10 @@ function NewExpenseScreen() {
   const remaining = splitMode === 'custom' ? remainderCents(amountCents, effectiveParticipants) : 0;
   const perPersonCents =
     includedMembers.length > 0 ? Math.round(amountCents / includedMembers.length) : 0;
-
-  /**
-   * Paying separately means each person's share is exactly what they put in,
-   * so the expense nets to zero for everyone — which is why there is no
-   * "you owe" anywhere in this mode.
-   */
   const separateSplits: SplitLine[] = ownList.map((p) => ({
     userId: p.userId,
     shareCents: p.paidCents,
   }));
-
-  /* --------------------------------------------------------- effects -- */
 
   useEffect(() => {
     if (categoryTouched) return;
@@ -174,8 +124,6 @@ function NewExpenseScreen() {
     if (paidBy === null && userId) setPaidBy(userId);
   }, [userId, paidBy]);
 
-  // Untouched custom shares follow the total, so correcting the amount never
-  // strands them at the old figure.
   useEffect(() => {
     if (separately || splitMode !== 'custom' || sharesTouched) return;
     setParticipants((current) =>
@@ -183,10 +131,7 @@ function NewExpenseScreen() {
     );
   }, [amountCents, splitMode, sharesTouched, members, separately]);
 
-  /* ---------------------------------------------------------- keypad -- */
-
   const editingRaw = editing.kind === 'total' ? amountRaw : memberRaw;
-
   const currentCentsFor = (memberId: string) =>
     separately
       ? Math.round(ownCents[memberId] ?? 0)
@@ -194,7 +139,6 @@ function NewExpenseScreen() {
 
   const selectForEditing = (target: EditTarget) => {
     setEditing(target);
-
     if (target.kind === 'member') {
       setMemberRaw(centsToRaw(currentCentsFor(target.userId)));
       setEditingPristine(true);
@@ -207,7 +151,6 @@ function NewExpenseScreen() {
     const next =
       key === 'clear' ? '' : applyKey(editingPristine && key !== 'delete' ? '' : editingRaw, key);
     setEditingPristine(false);
-
     if (editing.kind === 'total') {
       setAmountRaw(next);
       return;
@@ -215,7 +158,6 @@ function NewExpenseScreen() {
 
     setMemberRaw(next);
     const cents = parseAmountInput(next) ?? 0;
-
     if (separately) {
       setOwnCents((current) => ({ ...current, [editing.userId]: cents }));
       return;
@@ -229,18 +171,12 @@ function NewExpenseScreen() {
     );
   };
 
-  /* ------------------------------------------------------------ mode -- */
-
   const switchPayMode = (next: PayMode) => {
     if (next === payMode) return;
     setPayMode(next);
-
     if (next === 'separately') {
-      // Seed with whatever total was already typed, on the person who paid,
-      // so switching mid-entry does not throw the number away.
       const seed = parseAmountInput(amountRaw) ?? 0;
       const first = paidBy ?? members[0]?.id;
-
       setOwnCents(seed > 0 && first ? { [first]: seed } : {});
       if (first) {
         setEditing({ kind: 'member', userId: first });
@@ -248,7 +184,6 @@ function NewExpenseScreen() {
         setEditingPristine(seed > 0);
       }
     } else {
-      // Carry the separate total back as the bill total.
       setAmountRaw(separateTotal > 0 ? centsToRaw(separateTotal) : '');
       setOwnCents({});
       setEditing({ kind: 'total' });
@@ -297,8 +232,6 @@ function NewExpenseScreen() {
     }
   };
 
-  /* -------------------------------------------------------- receipt -- */
-
   const pickImage = async (source: 'camera' | 'library') => {
     const permission =
       source === 'camera'
@@ -328,28 +261,21 @@ function NewExpenseScreen() {
         : await ImagePicker.launchImageLibraryAsync(options);
 
     if (result.canceled || !result.assets?.[0]) return;
-
     const asset = result.assets[0];
     setReceiptUri(asset.uri);
     setScanNote(null);
-
     if (!isOcrEnabled()) return;
-
     setScanning(true);
     try {
       const parsed = await parseReceipt({ uri: asset.uri, base64: asset.base64 });
-
       if (parsed.error) {
         setScanNote(parsed.error);
       } else {
-        // A scanned total is the bill total, which only means something in
-        // 'one payer' mode.
         if (parsed.amountCents && !separately && amountRaw === '') {
           selectForEditing({ kind: 'total' });
           setAmountRaw((parsed.amountCents / 100).toFixed(2));
         }
         if (parsed.merchant && !description) setDescription(parsed.merchant);
-
         setScanNote(
           parsed.amountCents
             ? parsed.confidence >= 0.7
@@ -374,8 +300,6 @@ function NewExpenseScreen() {
     if (source === 'camera' || source === 'library') await pickImage(source);
   };
 
-  /* ----------------------------------------------------------- save -- */
-
   const canSave = separately
     ? separateTotal > 0 && !saving
     : split.valid && Boolean(paidBy) && !saving;
@@ -394,22 +318,16 @@ function NewExpenseScreen() {
 
   const submit = async () => {
     if (!canSave || !userId) return;
-
-    // `expenses.paid_by` is NOT NULL and is what simpler readers show, so
-    // point it at whoever put in the most.
     const primaryPayer = separately
       ? ([...ownList].sort((a, b) => b.paidCents - a.paidCents)[0]?.userId ?? userId)
       : paidBy;
 
     if (!primaryPayer) return;
-
     commitFeedback();
     setSaving(true);
     setError(null);
-
     try {
       const receiptPath = receiptUri ? await uploadReceipt(groupId, receiptUri) : null;
-
       await addExpense({
         groupId,
         paidBy: primaryPayer,
@@ -419,8 +337,6 @@ function NewExpenseScreen() {
         splits: separately ? separateSplits : split.lines,
         receiptPath,
         category,
-        // More than one contributor needs payer rows so each is credited what
-        // they actually put in; a single one is just an ordinary expense.
         payers: separately && ownList.length > 1 ? ownList : null,
         repeatMonthly,
       });
@@ -434,10 +350,8 @@ function NewExpenseScreen() {
   };
 
   if (loading && members.length === 0) return <Loading label="Loading group" />;
-
   const editingMember =
     editing.kind === 'member' ? members.find((m) => m.id === editing.userId) : undefined;
-
   const amountLabel =
     editing.kind === 'total'
       ? 'TOTAL'
@@ -479,7 +393,6 @@ function NewExpenseScreen() {
                 {members.map((member, index) => {
                   const cents = Math.round(ownCents[member.id] ?? 0);
                   const active = editing.kind === 'member' && editing.userId === member.id;
-
                   return (
                     <Pressable
                       key={member.id}
@@ -532,9 +445,6 @@ function NewExpenseScreen() {
             </ScrollView>
           )}
 
-          {/* ======================================= 2. SPLIT (one only) = */}
-          {/* Paying separately has no split step at all: each amount is
-              already that person's share. */}
           {!separately ? (
             <>
               <View style={styles.sectionHead}>
@@ -556,7 +466,6 @@ function NewExpenseScreen() {
                     effectiveParticipants.find((p) => p.userId === member.id)?.included ?? false;
                   const line = split.lines.find((l) => l.userId === member.id);
                   const active = editing.kind === 'member' && editing.userId === member.id;
-
                   return (
                     <View key={member.id} style={[styles.personRow, index > 0 && styles.rowBordered]}>
                       <Pressable
@@ -624,7 +533,6 @@ function NewExpenseScreen() {
             </>
           ) : null}
 
-          {/* =============================================== 3. AMOUNT == */}
           <View style={styles.divider} />
 
           <Text style={[styles.amountLabel, editing.kind !== 'total' && styles.amountLabelAlt]}>
@@ -752,7 +660,6 @@ function NewExpenseScreen() {
   );
 }
 
-/** Cents back to the digit string the keypad edits ("" for zero). */
 function centsToRaw(cents: number): string {
   if (!cents) return '';
   return cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2);
@@ -762,7 +669,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
   content: { padding: spacing.lg, paddingBottom: 120, gap: spacing.sm },
-
   sectionHead: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -773,7 +679,6 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { ...typography.label },
   headToggle: { width: 184 },
-
   rowCard: { overflow: 'hidden' },
   personRow: {
     flexDirection: 'row',
@@ -789,7 +694,6 @@ const styles = StyleSheet.create({
   personName: { ...typography.body, flex: 1 },
   personNameOff: { color: colors.textFaint },
   shareText: { ...typography.money, fontSize: 15 },
-
   amountBox: {
     minWidth: 92,
     paddingVertical: 7,
@@ -803,7 +707,6 @@ const styles = StyleSheet.create({
   amountBoxActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   amountBoxText: { ...typography.money, fontSize: 15 },
   amountBoxEmpty: { color: colors.textFaint },
-
   payerRow: { gap: spacing.sm, paddingVertical: spacing.xs, paddingRight: spacing.lg },
   payerPick: {
     alignItems: 'center',
@@ -817,13 +720,11 @@ const styles = StyleSheet.create({
   },
   payerPickOn: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   payerName: { ...typography.caption, color: colors.textMuted },
-  payerNameOn: { color: colors.primary, fontWeight: '800' },
-
+  payerNameOn: { color: colors.primary, fontFamily: fonts.bold },
   hintRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' },
   hint: { ...typography.caption, flexShrink: 1, lineHeight: 16 },
-  hintOk: { color: colors.positive, fontWeight: '700' },
-  hintWarn: { color: colors.warning, fontWeight: '700' },
-
+  hintOk: { color: colors.positive, fontFamily: fonts.bold },
+  hintWarn: { color: colors.warning, fontFamily: fonts.bold },
   divider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.border,
@@ -845,8 +746,7 @@ const styles = StyleSheet.create({
   amountAlt: { color: colors.primary },
   perPerson: { ...typography.caption, textAlign: 'center' },
   backToTotal: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs },
-  backToTotalText: { ...typography.caption, color: colors.primary, fontWeight: '700' },
-
+  backToTotalText: { ...typography.caption, color: colors.primary, fontFamily: fonts.bold },
   optionRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -861,12 +761,11 @@ const styles = StyleSheet.create({
   optionBody: { flex: 1, gap: 2 },
   optionTitle: { ...typography.bodyStrong, fontSize: 14.5 },
   optionTitleOn: { color: colors.primary },
-
   receiptCard: { flexDirection: 'row', gap: spacing.md, padding: spacing.md },
   receiptImage: { width: 52, height: 66, borderRadius: radius.sm, backgroundColor: colors.surfaceAlt },
   receiptBody: { flex: 1, gap: spacing.xs, justifyContent: 'center' },
   scanning: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  removeLink: { ...typography.caption, color: colors.negative, fontWeight: '700' },
+  removeLink: { ...typography.caption, color: colors.negative, fontFamily: fonts.bold },
   receiptEmpty: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -879,7 +778,6 @@ const styles = StyleSheet.create({
     borderColor: colors.borderStrong,
   },
   receiptCta: { ...typography.bodyStrong, color: colors.primary },
-
   footer: {
     position: 'absolute',
     left: 0,

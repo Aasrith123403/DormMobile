@@ -1,20 +1,56 @@
 # RoomLedger
 
-Shared expenses for small groups — dorms, apartments, ski trips — with the
-life-logistics extras that actually come up: recurring subscriptions, whose
-turn it is to buy toilet paper, and who is asleep right now.
+Shared expenses, chores and plans for the people you live with.
 
-Not a fintech app. There is no bank linking and no in-app payment processing.
-Settling up hands off to Venmo via a deep link; RoomLedger only records that it
-happened.
+One codebase, three targets: an **Android app** for Google Play, an
+**installable web app** that iPhone users add to their home screen, and the
+usual Expo dev builds for iOS and Android.
 
-**What it does:** shared expense ledger with categories and receipt OCR, live
-balances netted into the fewest payments, Venmo settle-up, recurring
-subscriptions that log themselves, spending insights, a supply-buying rotation,
-and lightweight group status.
+Built with Expo SDK 57, React Native 0.86, TypeScript, Expo Router and
+Supabase. ~17,800 lines, 348 unit tests.
 
-**Stack:** React Native + Expo (managed), TypeScript, Expo Router, Supabase
-(Postgres, Auth, Realtime, Storage).
+---
+
+## Contents
+
+- [What it does](#what-it-does)
+- [Quick start](#quick-start)
+- [Architecture](#architecture)
+- [The pure core](#the-pure-core)
+- [The data layer](#the-data-layer)
+- [The database](#the-database)
+- [The interface](#the-interface)
+- [Design system](#design-system)
+- [Auth and password reset](#auth-and-password-reset)
+- [Shipping](#shipping)
+- [Gotchas](#gotchas-things-that-will-bite-you)
+- [Commands](#commands)
+
+---
+
+## What it does
+
+You live with people. Money gets spent, chores get skipped, plans get made in
+a group chat and forgotten. RoomLedger is the shared record.
+
+| Feature | What it means |
+| --- | --- |
+| **Expenses & splits** | Log what was spent, split evenly or custom, or record that everyone paid separately |
+| **Multiple payers** | Two people can each have covered part of one bill |
+| **Balances** | Who owes whom, netted down to the fewest possible payments |
+| **Settle up** | Deep-links into Venmo, then records the payment |
+| **Chores** | Create them, then assign them; unassigned ones rotate automatically |
+| **Supplies** | "We're out" flags a staple and names whose turn it is to buy |
+| **Calendar** | Shared events, plus chore due dates and upcoming charges |
+| **Presence** | A self-declared status and coarse place ("at the library") |
+| **Pings** | "Come here" nudges with one-tap replies |
+| **Subscriptions** | Recurring charges that post themselves |
+| **Insights** | Where the money goes, by category and by person |
+
+**It is not a fintech app.** No bank linking, no card details, no payment
+processing. It tracks who owes what and hands off to Venmo. That distinction
+matters when you fill in Google Play's financial-features declaration — the
+answer is no.
 
 ---
 
@@ -22,122 +58,328 @@ and lightweight group status.
 
 ```bash
 npm install
-```
-
-```bash
-cp .env.example .env
-```
-
-Fill in `.env` (see [Configure](#2-configure-env) below), apply the migration,
-then:
-
-```bash
+cp .env.example .env      # fill in your Supabase URL and anon key
 npx expo start
 ```
 
-Scan the QR code with Expo Go, or press `i` / `a` for a simulator. Until `.env`
-has real credentials the app opens on a setup checklist rather than a blank
-screen.
+You need a free [Supabase](https://supabase.com) project. Create one, then:
+
+1. **Run the migrations.** Open the SQL editor and paste
+   `supabase/migrations/0001_init.sql`, run it, then paste
+   `supabase/apply_all.sql` (which is 0002–0008 concatenated) and run that.
+2. **Copy your keys** from Project Settings → Data API into `.env`.
+   Use the **Project URL** — the bare origin. The dashboard shows a REST
+   endpoint (`…/rest/v1`) next to it; pasting that one makes every request
+   fail, because supabase-js appends its own paths.
+3. **Add redirect URLs** under Authentication → URL Configuration, or password
+   reset links dead-end: `http://localhost:8081/reset-password` for local web,
+   your deployed origin for production, and `roomledger://reset-password` for
+   native.
+
+The anon key is safe to ship — it is designed to be public, and row-level
+security is what actually protects the data. **Never put a `service_role` key
+in `.env`**: it bypasses RLS entirely.
 
 ---
 
-## Setup
+## Architecture
 
-### 1. Apply the database migration
+Three layers, and the rule that keeps them apart is strict:
 
-1. Create a project at [supabase.com](https://supabase.com).
-2. Open **SQL Editor → New query**.
-3. Paste the entire contents of [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) and click **Run**.
-4. Paste [`supabase/apply_all.sql`](supabase/apply_all.sql) and click **Run**.
-   That is 0002–0005 concatenated in apply order, so it is one paste rather
-   than four. (The individual files are still in `supabase/migrations/` if you
-   prefer to apply them one at a time, but the order matters — 0004 references
-   a table 0003 creates.)
+```
+app/            Expo Router screens. JSX, navigation, local UI state.
+  ├── (auth)/   Sign in, sign up, forgot/reset password
+  └── (app)/    Everything behind a login
+      └── groups/[id]/   The three tabs + the screens they link to
 
-Each one degrades gracefully if skipped: without 0002 expenses save without a
-category, without 0003 there is no multi-payer support, and without 0004 the
-home screen falls back to netting balances on the device. The app detects each
-case and keeps working.
+src/core/       PURE LOGIC. No React, no I/O, no imports from src/data.
+                All the money maths lives here. 348 tests cover it.
 
-The migration is idempotent — re-running it is safe. It creates:
+src/data/       Supabase. Fetching, caching, realtime, mutations.
 
-- every table, with row-level security enabled on all of them
-- the `handle_new_user` trigger that mirrors `auth.users` into `public.users`
-- the RPCs (`create_group`, `join_group_by_code`,
-  `generate_due_subscription_charges`, `log_supply_purchase`)
-- the private `receipts` storage bucket and its policies
-- the realtime publication entries
-- an optional nightly `pg_cron` job (skipped automatically if the extension is
-  not enabled)
-
-Using the Supabase CLI instead? `supabase db push` picks the file up from
-`supabase/migrations/`.
-
-**Email confirmation.** Supabase requires it by default, so a new account has
-no session until the emailed link is clicked. To test solo, turn off *Confirm
-email* under **Authentication → Sign In / Providers → Email**.
-
-### 2. Configure `.env`
-
-```bash
-cp .env.example .env
+src/components/ The shared UI vocabulary.
+src/lib/        Supabase client, generated-ish DB types, env parsing.
 ```
 
-| Variable | Where it comes from |
+**Why the pure core matters.** Every calculation that could produce a wrong
+number — splitting a bill, netting balances, minimising transfers, deciding
+whose turn it is — is a pure function taking plain data and returning plain
+data. That means it can be tested exhaustively without a database, a device
+or a network, and it means those tests run in under a second.
+
+It also means the app is not especially tied to Supabase. Swapping the backend
+would mean rewriting `src/data/` and the SQL; `src/core/` would not change.
+
+---
+
+## The pure core
+
+`src/core/` — 18 modules, no I/O anywhere.
+
+| Module | Responsibility |
 | --- | --- |
-| `EXPO_PUBLIC_SUPABASE_URL` | Project Settings → Data API → Project URL |
-| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Project Settings → Data API → anon public key |
-| `EXPO_PUBLIC_OCR_PROVIDER` | `google`, `ocrspace`, or `none` |
-| `EXPO_PUBLIC_GOOGLE_VISION_API_KEY` | Google Cloud console (Vision API) |
-| `EXPO_PUBLIC_OCRSPACE_API_KEY` | [ocr.space/ocrapi](https://ocr.space/ocrapi) |
+| `money.ts` | Integer cents. Parsing, formatting, rounding |
+| `splits.ts` | Even and custom splits, remainder distribution |
+| `balances.ts` | Net position per person, then `minimizeTransfers` |
+| `rotation.ts` | Whose turn for a chore or a supply run |
+| `chores.ts` | Assignment, the per-person board, even distribution |
+| `calendar.ts` | Month grids, agendas, wall-clock time handling |
+| `feed.ts` | Turns everything that happened into one ordered list |
+| `presence.ts` | Statuses, places, ping inbox rules |
+| `subscriptions.ts` | Due dates, catch-up generation |
+| `insights.ts`, `spendSummary.ts` | Category and per-person breakdowns |
+| `settlePrompt.ts` | When to suggest settling up |
+| `recoveryLink.ts` | Parsing password-reset links |
+| `categories.ts` | The fixed category list and its colours |
+| `amountInput.ts` | Keypad digit-string handling |
 
-Only `EXPO_PUBLIC_*` variables reach the bundle. Never put a `service_role` key
-here — it bypasses row-level security. The anon key is designed to ship in
-clients; RLS is what protects the data.
+### Two decisions worth knowing
 
-Restart with `npx expo start -c` after editing `.env` — the values are inlined
-at build time.
+**Everything is integer cents.** Floats cannot represent 0.10 exactly, and a
+bill split three ways will drift. `money.ts` converts at the edges and nothing
+in between ever sees a float. When a split does not divide evenly the
+remainder goes to the earliest members by join order — deterministically, so
+every device agrees, and the SQL function `insert_even_splits` mirrors the
+same rule.
 
-### 3. Configure receipt OCR
+**Balances are derived, never stored.** There is no `balance` column. Every
+balance is computed from expenses, splits and settlements on read. A stored
+balance is a cache that can disagree with reality; a derived one cannot.
+`minimizeTransfers` then reduces the debt graph greedily to at most n−1
+payments, so three people settle with two payments, not six.
 
-OCR sits behind one function, [`parseReceipt(image)`](src/ocr/parseReceipt.ts).
-Swapping providers means writing a new `OcrProvider` and adding a case; no
-screen changes.
+---
 
-**Recommended: Google Cloud Vision.** It is a plain HTTPS call, so it works in
-Expo Go with no native module and no custom dev client, and
-`DOCUMENT_TEXT_DETECTION` handles creased thermal receipts far better than the
-free alternatives. The first 1,000 requests a month are free.
+## The data layer
 
-1. Create a Google Cloud project and enable the **Cloud Vision API**.
-2. Create an API key under **APIs & Services → Credentials**.
-3. Restrict it to the Vision API (and to your bundle id once you build standalone).
-4. Set `EXPO_PUBLIC_OCR_PROVIDER=google` and paste the key.
+`src/data/`
 
-**Alternative: OCR.space** — free tier, no billing account, noticeably less
-accurate. Set `EXPO_PUBLIC_OCR_PROVIDER=ocrspace` and add the key.
+- **`groupStore.ts`** — a module-level, ref-counted cache. One entry per
+  group, shared by every mounted `GroupProvider`. The first subscriber starts
+  the fetch and opens the realtime socket; the last to leave tears both down
+  after a 15-second grace period (tab switches and modals both briefly drop to
+  zero subscribers, and re-fetching each time would defeat the cache).
+- **`groupContext.tsx`** — a thin `useSyncExternalStore` view over that cache.
+  Derives balances, transfers and whose-turn maps.
+- **`useHouseFeed.ts`** — builds the feed once for the screens that need it.
+- **`mutations.ts`** — every write. Most go through Postgres functions so that
+  multi-step operations cannot half-apply.
+- **`auth.tsx`** — session, profile, and the password-recovery latch.
 
-**On-device** is cheaper at scale and works offline, but every option (ML Kit,
-Vision framework) needs a native module and therefore a custom dev client
-instead of Expo Go. If you build one, implement `OcrProvider` over
-`@react-native-ml-kit/text-recognition` and register it in `parseReceipt.ts`.
+### Graceful degradation
 
-With `EXPO_PUBLIC_OCR_PROVIDER=none` the scan button disappears and amounts are
-typed by hand — nothing is ever sent to a third party.
+Migrations 0002–0008 are optional in the sense that the app must not white-
+screen without them. This is not theoretical: PostgREST fails the **entire**
+query when an embedded relationship is missing, so one absent table used to
+blank the whole group screen, members and all.
 
-### 4. Configure Venmo
+`groupStore.ts` detects "relation does not exist" errors once, remembers it in
+a `degraded` flag, falls back to a query without that embed, and logs a single
+warning naming the migration to run.
 
-Nothing to install and no API key: RoomLedger builds a deep link and hands off.
+---
 
-- Each person adds their Venmo username in **Profile** (tap the avatar on the
-  home screen). Without it, their roommates see "no Venmo username" and can
-  only record payments manually.
-- The link opens `venmo://paycharge?txn=pay&recipients=…&amount=…&audience=private`,
-  falling back to `https://venmo.com/…` when the app is not installed.
-- `LSApplicationQueriesSchemes` (iOS) and `queries` (Android) are already
-  declared in `app.json`, which is what lets the app detect Venmo.
-- On return, RoomLedger asks whether the payment went through and only then
-  writes a `settlements` row. Payments are never assumed.
+## The database
+
+Supabase Postgres. Eight migrations in `supabase/migrations/`, plus
+`supabase/apply_all.sql` which is 0002–0008 concatenated for one-paste setup.
+Every statement is idempotent.
+
+| Migration | Adds |
+| --- | --- |
+| `0001_init` | Core schema, RLS, RPCs, storage bucket, realtime |
+| `0002_categories` | Expense and subscription categories |
+| `0003_multiple_payers` | `expense_payers` |
+| `0004_group_summaries` | One-query home screen |
+| `0005_household` | Supplies, chores, presence, repeating expenses |
+| `0006_presence_ping` | Self-declared place, "come here" pings |
+| `0007_chore_assignments_and_events` | Chore owners, the calendar |
+| `0008_keepalive` | Heartbeat so a free project is never paused |
+
+### Security model
+
+**Every table has row-level security, and the rule is the same everywhere: you
+can only see rows for groups you belong to.** Membership checks go through
+`SECURITY DEFINER` helpers (`is_group_member`, `is_group_owner`,
+`shares_group_with`) because a policy that queries `memberships` directly
+recurses into that table's own policy.
+
+Verified by querying all 13 tables as an anonymous caller: every one returns
+zero rows.
+
+Some operations are Postgres functions rather than client writes, because they
+have to be atomic or need a check RLS cannot express:
+
+- `create_group`, `join_group_by_code` — create the group and the owner
+  membership together
+- `buy_supply_item` — logs the expense, splits it, clears the flag, records
+  the buyer
+- `assign_chore` — validates the assignee is in *that* group, which the chores
+  policy cannot (it checks the chore's group, not the assignee's)
+- `record_heartbeat` — see below
+
+### Wall-clock dates
+
+Events store `event_date DATE` and `start_time TIME`, not `timestamptz`.
+"Dinner at 7" means seven o'clock where the house is. A timestamp would become
+6 or 8 for anyone whose phone reports a different zone — the classic shared-
+calendar bug.
+
+### Keeping a free project awake
+
+Supabase pauses free projects after **7 days of low database activity**, and a
+paused project is unreachable until someone restores it by hand. Any database
+activity resets that timer, so `.github/workflows/keepalive.yml` writes one
+timestamp every Monday and Thursday.
+
+The `heartbeat` table has RLS on with **no policies at all**, so nothing can
+reach it through the API. The only way in is `record_heartbeat()`, which takes
+no arguments, returns nothing, and can only set one timestamp on one row —
+which is why granting it to `anon` adds no attack surface.
+
+Set two repository secrets to turn it on (Settings → Secrets and variables →
+Actions): `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+
+> GitHub disables scheduled workflows in a repo with no commits for 60 days.
+> If this goes quiet for two months, re-enable it from the Actions tab.
+
+---
+
+## The interface
+
+Three tabs, and one way to create anything.
+
+| Tab | Answers |
+| --- | --- |
+| **Today** (`groups/[id]/index.tsx`) | What do I need to do right now? |
+| **Explore** (`groups/[id]/explore.tsx`) | How is the house doing, and where is everything else? |
+| **You** (`groups/[id]/you.tsx`) | My money, my chores, my status |
+
+**Today** is one number, one button, one list. The number is what you owe or
+are owed as large gradient type. The button opens the one creation flow. The
+list is whatever is waiting on you. History sits underneath, quiet.
+
+**Explore** is split in two on purpose: the top half is information you read
+and leave (a spend line, a stat grid); the bottom half is navigation. Most
+visits should end at the top without opening anything.
+
+**`add.tsx` — "What's on your mind?"** is the single entry point for creating
+an expense, event, chore, supply flag, ping or settle-up. It asks in words and
+routes you there, so nobody has to learn which tab owns which action.
+
+Ledger, balances, calendar, insights, subscriptions and the house screens all
+still exist; they hang off Explore rather than each taking a fifth of the tab
+bar.
+
+---
+
+## Design system
+
+Two files restyle every screen: `src/theme.ts` and `src/components/ui.tsx`.
+
+Near-black violet ground, one accent family (violet → pink), Poppins, full-pill
+buttons, and **no borders anywhere**. Depth is carried by brightness: cards sit
+lighter than the page, selected rows lighter than cards.
+
+Two rules stop a dark UI becoming a light show:
+
+1. **Only the primary action glows.** `glow()` is applied to exactly one
+   button per screen.
+2. **Colour is reserved.** Violet→pink for the accent, green and red for
+   money, nothing else.
+
+`src/components/shapes.tsx` holds the dark-mode toolkit:
+
+- `GlowOrb` — the ambient haze behind a header
+- `GradientNumber` — amounts as large gradient type. Drawn in **SVG** because
+  React Native has no gradient text and a masked view would be iOS-only
+- `Squiggle` — the smooth spend line
+- `Smiley` — the mascot, for empty states
+
+---
+
+## Auth and password reset
+
+Email and password via Supabase Auth. The app never sees or stores a password.
+
+**Forgot password** is on the sign-in screen. It emails a one-time link that
+opens `(auth)/reset-password.tsx`. Two things about that flow:
+
+1. **A recovery link is a real login.** Supabase signs the user in to prove
+   they own the address, so `RootNavigator` keeps a `recovering` latch that
+   holds them on the reset screen. Without it the router sees a session and
+   sends them into the app, and they never change their password.
+2. **The confirmation is deliberately vague.** "If that address has an account,
+   a link is on its way" is the same answer either way — a precise one would
+   let anyone test whether an email is a user here.
+
+Link parsing is in `src/core/recoveryLink.ts` with 17 tests, because it is the
+one step where a bug locks somebody out of their account.
+
+---
+
+## Shipping
+
+See **[docs/DEPLOYING.md](docs/DEPLOYING.md)** for the full walkthrough. Short
+version:
+
+**Web (PWA).** `npx expo export --platform web --output-dir dist` produces a
+static site. `public/` holds the manifest, service worker and icons. Must be
+served over HTTPS, and the host must rewrite every path to `index.html`
+(`web.output` is `"single"`). **This is how iPhone users get the app** — added
+to the home screen from Safari's Share menu. No App Store build exists and none
+is needed.
+
+**Android.** `eas build --platform android --profile production` produces the
+`.aab` Google Play wants. Supabase values come from EAS environment variables,
+not `.env`, which is not uploaded.
+
+The service worker deliberately **never caches Supabase traffic** — a stale
+balance is worse than a spinner. It caches the shell and build output only, so
+the app opens on a bad connection. There is no offline mode.
+
+---
+
+## Gotchas (things that will bite you)
+
+Each of these was a real bug. They are the reason the few remaining code
+comments exist.
+
+**Row types must be `type`, not `interface`.** postgrest-js requires each Row
+to satisfy `Record<string, unknown>`. Interfaces get no implicit index
+signature, so an interface silently degrades **every query result in the app**
+to `never`.
+
+**Never use `fontWeight`.** When a style names a font family like
+`Poppins_600SemiBold`, React Native **ignores `fontWeight` on Android**. Bold
+silently disappears on the platform you ship to Play while the web build fakes
+it. Use `fonts.semibold` / `fonts.bold` from the theme.
+
+**Import fonts and icons per path, not from the package root.**
+`@expo-google-fonts/poppins/400Regular`, not `@expo-google-fonts/poppins`.
+`@expo/vector-icons/Ionicons`, not `@expo/vector-icons`. The barrel imports
+ship all 18 Poppins weights and every icon font — 6.8 MB of the web bundle for
+4 weights and one icon set. Per-path brings it to 1.0 MB.
+
+**`react-native-svg` is a native module.** Glows, gradient numerals and the
+chart all use it, so Android needs a fresh `eas build` — an installed build
+will not pick it up over the air.
+
+**A modal with `headerShown: false` has no way out on web.** iOS has swipe-down
+and Android has hardware back; the PWA has neither. Any such screen needs an
+explicit back control.
+
+**`supabase.channel(topic)` returns the *existing* channel** if one with that
+topic is open, and a subscribed channel rejects new handlers. Topics get a
+unique suffix per subscription, or a modal mounting a second provider for the
+same group throws.
+
+**`Alert.alert` is a no-op on react-native-web.** Every confirmation would be
+silently dead in the browser. `src/components/dialog.tsx` is a Modal-based
+replacement used everywhere instead.
+
+**A pinned footer needs `KeyboardAvoidingView`.** Otherwise the keyboard
+covers the save button and the form cannot be submitted.
 
 ---
 
@@ -147,276 +389,20 @@ Nothing to install and no API key: RoomLedger builds a deep link and hands off.
 | --- | --- |
 | `npx expo start` | Run the app |
 | `npx expo start --web` | Run in a browser |
-| `npm test` | Unit tests for the pure logic |
-| `npm run typecheck` | TypeScript across the app and the tests |
+| `npm test` | 348 unit tests over the pure core |
+| `npm run typecheck` | TypeScript across app and tests |
 | `npx expo export --platform ios` | Production bundle, useful as a build check |
+| `npx expo export --platform web --output-dir dist` | Static web build (the PWA) |
+| `eas build --platform android --profile production` | Play Store app bundle |
 
 ---
 
-## How it works
+## A note on comments
 
-### Balances are derived, never stored
+The code is deliberately almost comment-free. The reasoning that would have
+been in comments is in this README instead — that way it is in one place, it
+stays readable, and it does not go stale in forty files at once.
 
-```
-balance(u) = what u paid − what u owes + what u has paid back − what u has been paid
-```
-
-[`computeBalances`](src/core/balances.ts) recomputes from expenses, splits and
-settlements on every render, so a stale total is impossible. Balances always
-sum to zero, which is what makes the netting terminate cleanly.
-
-[`minimizeTransfers`](src/core/balances.ts) then settles the largest debtor
-against the largest creditor until everyone is at zero — never more than n−1
-payments, and circular debts collapse to nothing. (The exact minimum is
-subset-sum hard; this is the standard approximation and is optimal for the
-group sizes involved.)
-
-### Money is integer cents
-
-Dollars exist only at the edges — parsed on input, formatted on output. Split
-remainders go one cent at a time to the earliest members, so shares always add
-up to the total exactly. The SQL function `insert_even_splits` uses the same
-rule, so a subscription charge generated server-side matches what the app would
-have produced.
-
-### Several people can pay for one thing
-
-`expenses.paid_by` remains the single payer for the ordinary case. When more
-than one person chips in, a row per contributor goes into `expense_payers`
-and the balance maths uses those instead (`payersOf` in
-[`src/core/balances.ts`](src/core/balances.ts)). An expense either has payer
-rows or it does not — there is no partial state — so older rows keep working
-untouched and `paid_by` still points at the largest contributor for anything
-that reads it directly.
-
-### Speed
-
-The home screen used to fetch every expense, split and settlement across all
-of the user's groups and net them on the device: six round trips and a payload
-that grew with the entire history, to render a handful of numbers. It now
-calls `get_my_group_summaries()`, which does the same arithmetic in Postgres
-and returns one row per group. The function is SECURITY INVOKER, so row-level
-security applies exactly as before.
-
-### Logging is the hot path
-
-Adding an expense is one screen with no system keyboard: a dedicated amount pad
-keeps the whole form visible, the category is guessed from what you type
-(`detectCategory`), and payer/split default to "you paid, everyone splits
-evenly" behind a collapsed summary. A typical expense is amount → category →
-Save.
-
-Anything the group logs repeatedly also shows up as a one-tap chip on the
-ledger (`suggestTemplates`), which logs it again at the last-used amount.
-
-### Motion is decoration that cannot break anything
-
-`src/components/motion.tsx` holds the whole vocabulary: content fades and
-lifts into place, money counts to its new value, proportions grow. Nothing
-loops or pulses, and everything is under ~500ms.
-
-Two rules keep it safe rather than merely pretty:
-
-- **Reduce motion is honoured.** Every animation collapses to an instant state
-  change when the OS accessibility setting is on.
-- **Frames are never assumed.** `requestAnimationFrame` does not fire in a
-  hidden browser tab or a backgrounded app, so a JS-driven animation can
-  simply never run — which for a fade-in would mean content stuck at opacity
-  0. Each animation arms a `setTimeout` (which does still fire when hidden)
-  that forces the final state. Verified with frames fully frozen.
-
-### Getting started, without nagging
-
-New accounts see a four-step checklist on the home screen. Every step is
-derived from real data (`src/core/onboarding.ts`) rather than a "seen it"
-flag, so it ticks itself off, can never claim something is undone when it is
-not, and disappears once the group is set up. It is dismissible, and there
-are no notifications anywhere in the app.
-
-### Everything derived is pure and tested
-
-`src/core/`, `src/venmo/deepLink.ts` and `src/ocr/extract.ts` contain no I/O and
-no React. 173 unit tests cover them, including randomised ledgers checked for
-exact settlement:
-
-```bash
-npm test
-```
-
-### Row-level security
-
-Every table has RLS on, and the rule is the same everywhere: *you can only
-touch rows belonging to a group you are a member of*. Membership checks run
-through `SECURITY DEFINER` helpers (`is_group_member`, `is_group_owner`) so the
-`memberships` policy does not recurse into itself.
-
-Two operations legitimately cross a group boundary and are RPCs instead:
-
-- `create_group` — creating the group and its owner membership must be atomic,
-  or the creator could not read back the group they just made.
-- `join_group_by_code` — a prospective member cannot `SELECT` the group yet, so
-  the code lookup has to run as definer.
-
-Receipts live in a **private** bucket at `<group_id>/<uuid>.jpg`; the storage
-policy checks the leading folder against your memberships, and the app reads
-them through short-lived signed URLs. A leaked URL grants nothing after it
-expires, and there is no public object path at all.
-
-### Realtime and the group cache
-
-Group data lives in a module-level store ([`src/data/groupStore.ts`](src/data/groupStore.ts))
-keyed by group id, not in the provider. The first subscriber starts the load
-and opens the websocket channels; the last one to leave tears them down after
-a short grace period. `GroupProvider` is a thin `useSyncExternalStore` view
-over it, so mounting several providers for the same group — the tabs plus a
-modal on top of them — costs one extra callback rather than another fetch and
-another socket.
-
-Two details that are easy to get wrong:
-
-- **Channel topics must be unique per subscription.** `supabase.channel(topic)`
-  returns the *existing* channel when the topic matches, and a channel that
-  has already been subscribed rejects further `.on()` handlers. A stable
-  per-group topic therefore throws as soon as a second subscriber appears.
-- **A refresh requested mid-fetch has to run again.** An in-flight read
-  reflects the database as of when it started, so a change arriving while it
-  is running would otherwise stay invisible until the next event.
-
-Refetching rather than patching keeps derived balances honest — a split
-arriving before its expense would otherwise render a wrong total for a frame.
-Bursts are coalesced, so one expense insert plus its splits is a single fetch.
-
-Signing out clears the cache, so the next account cannot see the previous
-one's ledger while its own data loads.
-
-### Subscription charges
-
-Two independent mechanisms, either of which is sufficient:
-
-1. **On open** — `GroupProvider` calls `generate_due_subscription_charges` when
-   a group mounts, generating every missed month and advancing the date.
-2. **Nightly** — the `pg_cron` job at the end of the migration, if you enable
-   the extension under **Database → Extensions**.
-
-A partial unique index on `(subscription_id, charge_date)` makes both paths
-idempotent: running the catch-up twice cannot double-charge anyone.
-
----
-
-## Project layout
-
-```
-app/                              Expo Router routes
-  _layout.tsx                     Providers + auth gate
-  (auth)/                         Sign in, sign up
-  (app)/
-    groups/index.tsx              Group list with live per-group balances
-    groups/new.tsx                Create (generates a join code)
-    groups/join.tsx               Join by code
-    groups/[id]/                  Group detail — tab bar lives here
-      _layout.tsx                 GroupProvider + Tabs
-      index.tsx                   Ledger
-      balances.tsx                Balances
-      subscriptions.tsx           Subscriptions
-      insights.tsx                Spending breakdown
-      house.tsx                   Supply rotation + group status
-    expense/new.tsx               Add expense (modal)
-    subscription/new.tsx          Add subscription (modal)
-    settle.tsx                    Settle up + Venmo (modal)
-    group-info.tsx                Join code, members, leave (modal)
-    profile.tsx                   Name, Venmo username, sign out (modal)
-
-src/
-  core/                           Pure logic — unit tested, no I/O
-    money.ts                      Cents conversion, parsing, formatting
-    categories.ts                 Catalogue, auto-detection, grouping
-    insights.ts                   Spending totals, templates
-    amountInput.ts                Keypad typing rules
-    onboarding.ts                 Getting-started checklist
-    splits.ts                     Even and custom splits, validation
-    balances.ts                   Netting and transfer minimisation
-    subscriptions.ts              Month arithmetic, catch-up dates
-    rotation.ts                   Supply turn order
-    base64.ts                     Encoder (React Native has no btoa)
-    __tests__/                    173 tests
-  venmo/deepLink.ts               Deep link construction (pure)
-  ocr/
-    parseReceipt.ts               The one swappable OCR seam
-    extract.ts                    OCR text -> amount + merchant (pure)
-    providers/                    Google Vision, OCR.space
-  data/
-    groupStore.ts                 Refcounted per-group cache + realtime
-    groupContext.tsx              useSyncExternalStore view over the store
-    groups.ts, mutations.ts       Group list, writes
-    auth.tsx, realtime.ts         Session, subscription helper
-  components/                     Shared UI
-    motion.tsx                    FadeIn, AnimatedMoney, AnimatedBar, PopIn
-    GettingStarted.tsx            Onboarding checklist card
-  lib/                            Client, env, database types
-  screens/SetupRequired.tsx       Shown when .env is unconfigured
-
-supabase/migrations/
-  0001_init.sql                   Schema, RLS, RPCs, storage, cron
-  0002_categories.sql             Expense + subscription categories
-  0003_multiple_payers.sql        expense_payers for shared payment
-  0004_group_summaries.sql        One-query home screen
-```
-
----
-
-## Design decisions worth knowing
-
-**`users.venmo_username` is not in the original data model.** A Venmo deep link
-needs a recipient handle, and there was nowhere to put it. It is nullable;
-without it the Settle Up screen degrades to manual recording.
-
-**`expenses.subscription_id` and `expenses.charge_date` are additions too.**
-They exist so subscription catch-up can be idempotent — without them, two
-people opening the app on the 1st would each generate the month's charge.
-
-**Deleting an expense is a long-press on the ledger row**, not a swipe, because
-a swipe next to a scrolling list is easy to trigger by accident and this
-deletes data for everyone.
-
-**No notifications, anywhere.** Balances are visible the moment the app opens —
-on the home screen, in the group header, and on the Balances tab. Nobody gets
-nagged.
-
----
-
-## Troubleshooting
-
-**"Add EXPO_PUBLIC_SUPABASE_URL…"** — `.env` is missing or still has
-placeholders. Fill it in and restart with `npx expo start -c`.
-
-**"Invalid path specified in request URL"** — `EXPO_PUBLIC_SUPABASE_URL` has a
-path on it. The dashboard shows a REST endpoint (`…/rest/v1`) right beside the
-Project URL, and supabase-js appends its own `/auth/v1` and `/rest/v1` paths to
-whatever you configure. Use the bare origin:
-`https://<project-ref>.supabase.co`. The app strips a stray path and warns in
-development, but fix `.env` so production behaves the same.
-
-**Sign-up succeeds but nothing happens** — email confirmation is on. Click the
-link, or disable *Confirm email* in Supabase.
-
-**"email rate limit exceeded"** — Supabase's built-in SMTP sends only a couple
-of messages per hour per project, and every sign-up attempt spends one. Turn
-off *Confirm email* under **Authentication → Sign In / Providers → Email**:
-sign-up then returns a session immediately and sends nothing, so the limit
-stops applying. Accounts created before you flipped it can sign in normally
-once it is off — no need to register again. For a real deployment, configure
-your own SMTP provider instead.
-
-**"That join code doesn't match any group"** — codes are six characters and
-exclude lookalikes (no O/0 or I/1). They are case-insensitive.
-
-**Expenses do not appear for other members in real time** — check that
-**Database → Replication** lists the `supabase_realtime` publication with the
-app's tables. Section 8 of the migration adds them.
-
-**Receipt scanning does nothing** — `EXPO_PUBLIC_OCR_PROVIDER` is `none`, or
-the key is missing. The scan button falls back to attaching a plain photo.
-
-**Venmo does not open** — the recipient has no `venmo_username`, or Venmo is
-not installed (the app then opens the web flow). On a simulator without Venmo,
-expect the web fallback.
+The handful of comments that remain all mark the same thing: a change that
+looks harmless and silently breaks something. They are listed under
+[Gotchas](#gotchas-things-that-will-bite-you).

@@ -5,21 +5,18 @@ import { StyleSheet, Text } from 'react-native';
 import { Button, Card, ErrorBanner, Field, Screen } from '../../../src/components/ui';
 import { joinGroupByCode } from '../../../src/data/groups';
 import { friendlyError } from '../../../src/lib/supabase';
-import { colors, spacing, typography } from '../../../src/theme';
+import { colors, fonts, spacing, typography } from '../../../src/theme';
 
 export default function JoinGroupScreen() {
   const router = useRouter();
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
   const normalized = code.trim().toUpperCase();
-
   const submit = async () => {
     if (busy || normalized.length < 4) return;
     setBusy(true);
     setError(null);
-
     try {
       const groupId = await joinGroupByCode(normalized);
       router.replace(`/(app)/groups/${groupId}`);
@@ -68,7 +65,7 @@ export default function JoinGroupScreen() {
 const styles = StyleSheet.create({
   codeInput: {
     fontSize: 28,
-    fontWeight: '700',
+    fontFamily: fonts.bold,
     letterSpacing: 8,
     textAlign: 'center',
     minHeight: 64,

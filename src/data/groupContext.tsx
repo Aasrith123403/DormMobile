@@ -7,9 +7,17 @@ import {
   computeBalances,
   minimizeTransfers,
 } from '../core/balances';
+import { choreOwner } from '../core/chores';
 import { toCents } from '../core/money';
 import { countPurchases, nextChoreTurn, nextSupplyBuyer } from '../core/rotation';
-import type { GroupRow, GroupStatusRow, SettlementRow, SupplyItemRow } from '../lib/database.types';
+import type {
+  EventRow,
+  GroupRow,
+  GroupStatusRow,
+  PingRow,
+  SettlementRow,
+  SupplyItemRow,
+} from '../lib/database.types';
 import { useAuth } from './auth';
 import { MemberProfile } from './members';
 import {
@@ -33,15 +41,14 @@ interface GroupContextValue {
   subscriptions: GroupSubscription[];
   supplyItems: SupplyItemRow[];
   chores: GroupChore[];
-  /** Statuses that have not aged out — nobody has to unset them. */
   statuses: GroupStatusRow[];
-  /** Whose turn it is to buy each staple, derived. Keyed by supply item id. */
+  pings: PingRow[];
+  events: EventRow[];
   supplyTurns: Map<string, string | null>;
-  /** Whose turn it is for each chore, derived. Keyed by chore id. */
   choreTurns: Map<string, string | null>;
+  choreOwners: Map<string, string | null>;
   balances: MemberBalance[];
   transfers: Transfer[];
-  /** The signed-in user's net position, in cents. */
   myNetCents: number;
   loading: boolean;
   error: string | null;
@@ -51,14 +58,8 @@ interface GroupContextValue {
 
 const GroupContext = createContext<GroupContextValue | null>(null);
 
-/**
- * Thin view over the shared group cache. Mounting several providers for the
- * same group — the tabs plus a modal on top of them — costs one extra
- * subscription callback, not another fetch or another websocket channel.
- */
 export function GroupProvider({ groupId, children }: { groupId: string; children: React.ReactNode }) {
   const { userId } = useAuth();
-
   const subscribe = useCallback(
     (listener: () => void) => subscribeToGroup(groupId, listener),
     [groupId]
@@ -78,25 +79,19 @@ export function GroupProvider({ groupId, children }: { groupId: string; children
     supplyItems,
     chores,
     statuses: rawStatuses,
+    pings,
+    events,
     loading,
     error,
   } = snapshot;
 
-  // A status past its clears_at is simply not shown. No cleanup job, no
-  // reminder to unset it — it just stops being true.
   const statuses = useMemo(
     () => rawStatuses.filter((s) => !s.clears_at || s.clears_at > new Date().toISOString()),
     [rawStatuses]
   );
 
-  /**
-   * Turns are derived, never stored: who bought/did it last, plus who has
-   * done it least overall. Computed here so every screen and the feed give
-   * the same answer.
-   */
   const { supplyTurns, choreTurns } = useMemo(() => {
     const memberIds = members.map((m) => m.id);
-
     const supplyCounts = countPurchases(
       expenses
         .filter((e) => e.supply_item_id)
@@ -134,6 +129,14 @@ export function GroupProvider({ groupId, children }: { groupId: string; children
     return { supplyTurns: supply, choreTurns: chore };
   }, [members, expenses, supplyItems, chores]);
 
+  const choreOwners = useMemo(
+    () =>
+      new Map<string, string | null>(
+        chores.map((c) => [c.id, choreOwner(c.assigned_to, choreTurns.get(c.id) ?? null)])
+      ),
+    [chores, choreTurns]
+  );
+
   const { balances, transfers } = useMemo(() => {
     const computed = computeBalances({
       memberIds: members.map((m) => m.id),
@@ -154,7 +157,6 @@ export function GroupProvider({ groupId, children }: { groupId: string; children
   }, [members, expenses, settlements]);
 
   const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
-
   const value = useMemo<GroupContextValue>(
     () => ({
       groupId,
@@ -167,8 +169,11 @@ export function GroupProvider({ groupId, children }: { groupId: string; children
       supplyItems,
       chores,
       statuses,
+      pings,
+      events,
       supplyTurns,
       choreTurns,
+      choreOwners,
       balances,
       transfers,
       myNetCents: (userId && balances.find((b) => b.userId === userId)?.netCents) || 0,
@@ -192,8 +197,11 @@ export function GroupProvider({ groupId, children }: { groupId: string; children
       supplyItems,
       chores,
       statuses,
+      pings,
+      events,
       supplyTurns,
       choreTurns,
+      choreOwners,
       balances,
       transfers,
       userId,
