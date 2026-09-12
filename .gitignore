@@ -1,0 +1,21 @@
+node_modules/
+.expo/
+dist/
+web-build/
+*.log
+.DS_Store
+
+# Local secrets — commit .env.example instead.
+.env
+.env.local
+.env.*.local
+
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Play Store upload credential — never commit this
+play-service-account.json
